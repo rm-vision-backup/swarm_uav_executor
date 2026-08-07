@@ -1,0 +1,27 @@
+driver: mock
+store_ttl_s: 3600.0
+store_max_records: 1024
+terminal_republish_count: 3
+terminal_republish_interval_s: 0.2
+shutdown_hold_timeout_s: 2.0
+mock:
+  result_delay_s: 0.5
+  final_success: true
+  error_code: ""
+  message: mock UAV task finished
+  ready: true
+  hold_success: true
+mavros_position:
+  namespace: /mavros
+  frame_id: map
+  setpoint_rate_hz: 30.0
+  pose_timeout_s: 0.5
+  state_timeout_s: 1.0
+  position_tolerance_m: 0.20
+  yaw_tolerance_rad: 0.15
+  settle_duration_s: 1.0
+  require_connected: true
+  require_armed: false
+  require_offboard: false
+  auto_arm: false
+  auto_offboard: false
