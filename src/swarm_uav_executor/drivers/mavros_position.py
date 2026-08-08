@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import math
 import threading
+import time
 
 import rospy
 from geometry_msgs.msg import PoseStamped
@@ -33,8 +34,9 @@ class MavrosPositionDriver(MotionDriver):
                  position_tolerance_m=0.20, yaw_tolerance_rad=0.15,
                  settle_duration_s=1.0, require_connected=True,
                  require_armed=False, require_offboard=False,
-                 auto_arm=False, auto_offboard=False, ros=rospy,
-                 pose_type=PoseStamped, state_type=State):
+                  auto_arm=False, auto_offboard=False, ros=rospy,
+                  pose_type=PoseStamped, state_type=State,
+                  monotonic_clock=time.monotonic):
         if auto_arm or auto_offboard:
             raise ValueError("automatic arm/offboard is forbidden by the safety baseline")
         if not frame_id or frame_id.startswith("/"):
@@ -63,8 +65,11 @@ class MavrosPositionDriver(MotionDriver):
         self._pose_received_s = None
         self._state = None
         self._state_received_s = None
+        self._state_received_monotonic_s = None
         self._target = None
         self._shutdown = False
+        self._monotonic_clock = monotonic_clock
+        self._disarmed_since_monotonic_s = None
         self.clock = self._now_s
 
         self._publisher = ros.Publisher(
@@ -115,6 +120,30 @@ class MavrosPositionDriver(MotionDriver):
         with self._lock:
             self._state = copy.deepcopy(message)
             self._state_received_s = self._now_s()
+            self._state_received_monotonic_s = self._monotonic_clock()
+            if message.armed:
+                self._disarmed_since_monotonic_s = None
+            elif self._disarmed_since_monotonic_s is None:
+                self._disarmed_since_monotonic_s = self._monotonic_clock()
+
+    def can_end_safety_lease(self, disarmed_stable_s):
+        with self._lock:
+            state = copy.deepcopy(self._state)
+            disarmed_since = self._disarmed_since_monotonic_s
+            state_received = self._state_received_monotonic_s
+        if state is None:
+            return False, "MAVROS state has not been received"
+        now = self._monotonic_clock()
+        if state_received is None or now - state_received > self.state_timeout_s:
+            return False, "MAVROS state is stale"
+        if not state.connected:
+            return False, "MAVROS is disconnected"
+        if state.armed or disarmed_since is None:
+            return False, "vehicle is armed"
+        stable_for = now - disarmed_since
+        if stable_for < float(disarmed_stable_s):
+            return False, "vehicle disarm state is not yet stable"
+        return True, "vehicle is stably disarmed"
 
     def _set_target(self, target):
         if target.header.frame_id != self.frame_id:

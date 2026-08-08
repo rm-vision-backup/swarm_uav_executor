@@ -60,7 +60,7 @@ class MavrosPositionDriverTest(unittest.TestCase):
         self.ros = FakeRos()
         self.driver = MavrosPositionDriver(
             namespace="/UAV1/mavros", pose_timeout_s=1.0, state_timeout_s=1.0,
-            settle_duration_s=0.2, ros=self.ros,
+            settle_duration_s=0.2, ros=self.ros, monotonic_clock=lambda: self.ros.now,
         )
         self.driver._pose_callback(pose())
         self.driver._state_callback(State(connected=True, armed=False, mode="MANUAL"))
@@ -104,6 +104,22 @@ class MavrosPositionDriverTest(unittest.TestCase):
             MavrosPositionDriver(auto_arm=True, ros=FakeRos())
         with self.assertRaises(ValueError):
             MavrosPositionDriver(auto_offboard=True, ros=FakeRos())
+
+    def test_end_requires_stably_disarmed_state(self):
+        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertFalse(safe)
+        self.ros.now = 3.0
+        self.driver._state_callback(State(connected=True, armed=False))
+        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertTrue(safe)
+        self.driver._state_callback(State(connected=True, armed=True))
+        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertFalse(safe)
+
+    def test_end_rejects_stale_or_disconnected_state(self):
+        self.ros.now = 3.0
+        safe, message = self.driver.can_end_safety_lease(3.0)
+        self.assertFalse(safe); self.assertIn("stale", message)
+        self.driver._state_callback(State(connected=False, armed=False))
+        safe, message = self.driver.can_end_safety_lease(3.0)
+        self.assertFalse(safe); self.assertIn("disconnected", message)
 
     def test_exposes_ros_clock_and_shutdown_stops_all_handles(self):
         self.ros.now = 4.2

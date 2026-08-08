@@ -4,6 +4,13 @@ store_max_records: 1024
 terminal_republish_count: 3
 terminal_republish_interval_s: 0.2
 shutdown_hold_timeout_s: 2.0
+safety_lease:
+  watchdog_hz: 10.0
+  default_ttl_s: 5.0
+  min_ttl_s: 1.0
+  max_ttl_s: 30.0
+  disarmed_stable_s: 3.0
+  required_for_tasks: false
 mock:
   result_delay_s: 0.5
   final_success: true
