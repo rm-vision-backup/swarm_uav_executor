@@ -58,12 +58,41 @@ class UavTaskExecutor:
         record = self.store.get(key); deadline = self.clock() + record.timeout_s
         try: result = self.driver.start_move_to(goal, cancel_event, deadline)
         except Exception as error: result = type("Result", (), {"success": False, "error_code": "DRIVER_EXCEPTION", "message": str(error)})()
+        if not result.success:
+            with self._lock:
+                current = self.store.get(key)
+                if current is None or current.terminal or cancel_event.is_set(): return
+                # Own the safety transition before replacing the motion target,
+                # so no new task or concurrent HOLD can race this fallback.
+                self._hold_in_progress = True
+            try:
+                hold_result = self.driver.hold(
+                    HoldGoal("%s: %s" % (result.error_code, result.message)),
+                    self.clock() + self.config.shutdown_hold_timeout_s,
+                )
+            except Exception as error:
+                hold_result = type("Result", (), {
+                    "success": False, "error_code": "HOLD_FAILED", "message": str(error)
+                })()
+            with self._lock:
+                current = self.store.get(key)
+                if current is not None and not current.terminal:
+                    if hold_result.success:
+                        error_code = result.error_code or "MOTION_FAILED"
+                        message = result.message
+                    else:
+                        error_code = "HOLD_FAILED"
+                        message = "%s: %s; safety HOLD failed: %s" % (
+                            result.error_code or "MOTION_FAILED", result.message, hold_result.message
+                        )
+                    self.reporter.publish_transition(key, STATE_FAILED, "HOLD", error_code, message)
+                self._cancel = None; self._hold_in_progress = False
+            return
         with self._lock:
             current = self.store.get(key)
             if current is None or current.terminal: return
             if cancel_event.is_set(): return  # HOLD owns the terminal transition.
-            status = STATE_COMPLETED if result.success else STATE_FAILED
-            self.reporter.publish_transition(key, status, status, result.error_code, result.message)
+            self.reporter.publish_transition(key, STATE_COMPLETED, STATE_COMPLETED, result.error_code, result.message)
             self._cancel = None
 
     def _run_hold(self, interrupted, reason):

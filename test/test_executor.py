@@ -33,4 +33,14 @@ class ExecutorTest(unittest.TestCase):
         self.assertTrue(executor.handle_hold(hold).accepted); time.sleep(.08)
         self.assertEqual(store.active(),None); self.assertEqual(driver.hold_count,1)
         self.assertEqual(next(iter(store._records.values())).error_code,"COMMAND_HELD")
+    def test_motion_failure_captures_hold_before_terminal(self):
+        executor,store,_,driver=make(.01,False); executor.handle_task(request()); time.sleep(.08)
+        record=next(iter(store._records.values()))
+        self.assertEqual(record.status,"FAILED"); self.assertEqual(record.error_code,"TEST_FAILED")
+        self.assertEqual(record.detail_stage,"HOLD"); self.assertEqual(driver.hold_count,1)
+    def test_hold_failure_replaces_motion_error_with_safety_error(self):
+        executor,store,_,driver=make(.01,False); driver.hold_success=False
+        executor.handle_task(request()); time.sleep(.08); record=next(iter(store._records.values()))
+        self.assertEqual(record.error_code,"HOLD_FAILED")
+        self.assertIn("TEST_FAILED",record.message); self.assertEqual(driver.hold_count,1)
 if __name__ == "__main__": unittest.main()
