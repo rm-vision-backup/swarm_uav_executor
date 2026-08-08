@@ -155,6 +155,11 @@ class UavTaskExecutor:
             self._cancel = None; self._hold_in_progress = False
         return SafetyHoldResult(bool(result.success), result.error_code, result.message)
 
+    def release_local_safety_latch(self):
+        """Allow future work after the active lease epoch has ended safely."""
+        with self._lock:
+            self._local_safety_latched = False
+
     def shutdown(self):
         with self._lock: self._shutdown = True
         active = self.store.active()

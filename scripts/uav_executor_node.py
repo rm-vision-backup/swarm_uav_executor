@@ -83,7 +83,8 @@ def main():
     watchdog = SafetyLeaseWatchdog(
         identity, lease_config,
         lambda _event: executor.trigger_local_safety_hold("LEASE_EXPIRED", "GCS safety lease expired"),
-        lambda: driver.can_end_safety_lease(lease_config.disarmed_stable_s), time.monotonic)
+        lambda: driver.can_end_safety_lease(lease_config.disarmed_stable_s), time.monotonic,
+        executor.release_local_safety_latch)
     executor.lease_guard = watchdog
     task_service = rospy.Service(config.task_service, UavTask, executor.handle_task)
     hold_service = rospy.Service(config.hold_service, UavHold, executor.handle_hold)

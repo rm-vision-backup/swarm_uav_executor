@@ -24,12 +24,13 @@ def request(operation="START", epoch="epoch-1", seq=1, ttl=5.0, mission="mission
 
 class SafetyLeaseWatchdogTest(unittest.TestCase):
     def setUp(self):
-        self.clock = Clock(); self.expiries = []; self.safe_to_end = True
+        self.clock = Clock(); self.expiries = []; self.safe_to_end = True; self.safe_ends = 0
         config = SafetyLeaseConfig("/UAV1/uav_safety_lease")
         self.watchdog = SafetyLeaseWatchdog(
             ExecutorIdentity("A01", "UAV1"), config,
             lambda event: self.expiries.append(event) or True,
-            lambda: (self.safe_to_end, "still armed"), self.clock)
+            lambda: (self.safe_to_end, "still armed"), self.clock,
+            lambda: setattr(self, "safe_ends", self.safe_ends + 1))
 
     def test_start_renew_and_exact_duplicate_are_idempotent(self):
         start = request(); self.assertTrue(self.watchdog.handle_lease(start).accepted)
@@ -73,10 +74,19 @@ class SafetyLeaseWatchdogTest(unittest.TestCase):
         response = self.watchdog.handle_lease(request("END", seq=2))
         self.assertEqual("LEASE_END_UNSAFE", response.error_code)
         self.assertEqual(LEASE_ACTIVE, self.watchdog.state)
+        self.assertEqual(0, self.safe_ends)
         self.safe_to_end = True
         response = self.watchdog.handle_lease(request("END", seq=2))
         self.assertTrue(response.accepted); self.assertEqual(LEASE_INACTIVE, self.watchdog.state)
+        self.assertEqual(1, self.safe_ends)
         self.assertTrue(self.watchdog.handle_lease(request(epoch="epoch-2", seq=1)).accepted)
+
+    def test_safe_end_callback_failure_keeps_lease_latched(self):
+        self.watchdog.handle_lease(request())
+        self.watchdog._on_safe_end = lambda: (_ for _ in ()).throw(RuntimeError("unlock failed"))
+        response = self.watchdog.handle_lease(request("END", seq=2))
+        self.assertEqual("LEASE_END_FAILED", response.error_code)
+        self.assertEqual(LEASE_ACTIVE, self.watchdog.state)
 
     def test_expired_epoch_can_end_but_cannot_restart(self):
         self.watchdog.handle_lease(request()); self.clock.now = 5.0; self.watchdog.check_expiry()

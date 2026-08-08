@@ -32,11 +32,13 @@ class LeaseValidationError(ValueError):
 
 
 class SafetyLeaseWatchdog:
-    def __init__(self, identity, config: SafetyLeaseConfig, on_expire, can_end, clock=time.monotonic):
+    def __init__(self, identity, config: SafetyLeaseConfig, on_expire, can_end,
+                 clock=time.monotonic, on_safe_end=None):
         self.identity = identity
         self.config = config
         self._on_expire = on_expire
         self._can_end = can_end
+        self._on_safe_end = on_safe_end or (lambda: None)
         self._clock = clock
         self._lock = threading.RLock()
         self._record = None
@@ -181,6 +183,11 @@ class SafetyLeaseWatchdog:
         if not safe:
             self._record = record
             raise LeaseValidationError("LEASE_END_UNSAFE", message or "lease cannot end safely")
+        try:
+            self._on_safe_end()
+        except Exception as error:
+            self._record = record
+            raise LeaseValidationError("LEASE_END_FAILED", "safe END callback failed: %s" % error)
         self._last_epoch = request.session_epoch
         self._record = None
         self._expiry_dispatched = False
