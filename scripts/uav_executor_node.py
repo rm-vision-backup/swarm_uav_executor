@@ -40,7 +40,10 @@ def main():
     driver = build_driver(driver_name); store = TaskStore(config.store_ttl_s, config.store_max_records)
     publisher = rospy.Publisher(config.state_topic, UavTaskState, queue_size=20)
     reporter = StateReporter(identity, store, publisher, config.terminal_republish_count, config.terminal_republish_interval_s)
-    executor = UavTaskExecutor(identity, config, store, reporter, driver)
+    # Deadlines must use the same clock as the selected driver.  In particular,
+    # MAVROS follows ROS time so SITL /use_sim_time cannot be mixed with wall time.
+    executor = UavTaskExecutor(identity, config, store, reporter, driver,
+                               clock=getattr(driver, "clock", None) or __import__("time").time)
     rospy.Service(config.task_service, UavTask, executor.handle_task); rospy.Service(config.hold_service, UavHold, executor.handle_hold)
     rospy.on_shutdown(executor.shutdown)
     rospy.loginfo("UAV executor ready identity=%s/%s driver=%s interfaces_version=%s", identity.uav_id, identity.exec_target,

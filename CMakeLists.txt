@@ -7,12 +7,13 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   rostest
   swarm_uav_interfaces
+  tf
 )
 
 catkin_python_setup()
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs mavros_msgs rospy swarm_uav_interfaces
+  CATKIN_DEPENDS geometry_msgs mavros_msgs rospy swarm_uav_interfaces tf
 )
 
 catkin_install_python(PROGRAMS
