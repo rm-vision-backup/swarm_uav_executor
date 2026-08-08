@@ -67,6 +67,13 @@ class LeaseExpiryEvent:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class SafetyHoldResult:
+    success: bool
+    error_code: str = ""
+    message: str = ""
+
+
 @dataclass(frozen=True, order=True)
 class TaskKey:
     mission_id: str
