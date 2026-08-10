@@ -42,8 +42,14 @@ def validate_task_request(request, identity: ExecutorIdentity, supported_command
         raise RequestValidationError("INVALID_TIMEOUT", "timeout_s must be finite and positive")
     if request.command not in supported_commands:
         raise RequestValidationError("UNSUPPORTED_COMMAND", "unsupported command: %s" % request.command)
-    if request.command == "MOVE_TO":
+    if request.command in ("MOVE_TO", "FAULT_EXIT", "HOVER"):
         validate_move_to_assignment(request.assignment)
+    elif request.command == "FOLLOW_ROUTE":
+        if request.leader_id and request.leader_id != request.uav_id:
+            raise RequestValidationError(
+                "NOT_IMPLEMENTED",
+                "FOLLOW_ROUTE follower semantics (leader_id differs from uav_id) is P2")
+        validate_route_assignment(request.assignment)
 
 
 def validate_move_to_assignment(assignment) -> MotionGoal:
@@ -53,6 +59,33 @@ def validate_move_to_assignment(assignment) -> MotionGoal:
     if not all(math.isfinite(float(value)) for value in values):
         raise RequestValidationError("INVALID_ASSIGNMENT", "MOVE_TO target_pose must be finite")
     return MotionGoal(*(float(value) for value in values))
+
+
+def validate_route_assignment(assignment) -> MotionGoal:
+    if assignment.formation_follow:
+        raise RequestValidationError("NOT_IMPLEMENTED", "FOLLOW_ROUTE formation follow is P2")
+    if not assignment.waypoints:
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE leader requires waypoints")
+    waypoints = [(float(p.x), float(p.y), float(p.z), float(p.yaw)) for p in assignment.waypoints]
+    if not all(math.isfinite(v) for wp in waypoints for v in wp):
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE waypoints must be finite")
+    last = waypoints[-1]
+    return MotionGoal(last[0], last[1], last[2], last[3], waypoints=tuple(waypoints), command="FOLLOW_ROUTE")
+
+
+def build_goal(request) -> MotionGoal:
+    if request.command in ("MOVE_TO", "FAULT_EXIT", "HOVER"):
+        goal = validate_move_to_assignment(request.assignment)
+        return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, (), request.leader_id,
+                          bool(request.assignment.formation_follow), request.command)
+    if request.command == "FOLLOW_ROUTE":
+        # FOLLOW_ROUTE reaching the driver means the leader role: validation
+        # already rejects formation_follow as NOT_IMPLEMENTED, so keep the
+        # leader_id for traceability instead of dropping it on the floor.
+        goal = validate_route_assignment(request.assignment)
+        return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, goal.waypoints,
+                          request.leader_id, False, goal.command)
+    raise RequestValidationError("UNSUPPORTED_COMMAND", "unsupported command: %s" % request.command)
 
 
 def validate_hold_request(request, identity: ExecutorIdentity) -> None:

@@ -18,6 +18,12 @@ mock:
   message: mock UAV task finished
   ready: true
   hold_success: true
+ego_swarm:
+  namespace: /UAV1
+  state_timeout_s: 5.0
+  position_tolerance_m: 0.2
+  arrival_stable_s: 1.0
+  pose_timeout_s: 1.0
 mavros_position:
   namespace: /mavros
   frame_id: map

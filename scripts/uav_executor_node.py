@@ -34,6 +34,9 @@ def build_driver(driver_name):
     if driver_name == "mavros_position":
         from swarm_uav_executor.drivers.mavros_position import MavrosPositionDriver
         return MavrosPositionDriver.from_ros_params()
+    if driver_name == "ego_swarm":
+        from swarm_uav_executor.drivers.ego_swarm import EgoSwarmDriver
+        return EgoSwarmDriver.from_ros_params()
     raise ValueError("unknown driver: %s" % driver_name)
 
 
@@ -78,7 +81,7 @@ def main():
         float(rospy.get_param("~safety_lease/min_ttl_s", 1.0)),
         float(rospy.get_param("~safety_lease/max_ttl_s", 30.0)),
         float(rospy.get_param("~safety_lease/disarmed_stable_s", 3.0)),
-        bool(rospy.get_param("~safety_lease/required_for_tasks", driver_name == "mavros_position")),
+        bool(rospy.get_param("~safety_lease/required_for_tasks", driver_name in ("mavros_position", "ego_swarm"))),
     )
     watchdog = SafetyLeaseWatchdog(
         identity, lease_config,

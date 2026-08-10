@@ -1,0 +1,35 @@
+<launch>
+  <arg name="uav_id" />
+  <arg name="exec_target" />
+  <arg name="service_namespace" default="$(arg exec_target)" />
+  <arg name="state_topic" default="/$(arg service_namespace)/uav_task_state" />
+  <arg name="ego_namespace" default="$(arg exec_target)" />
+  <arg name="interfaces_version" default="deployment-unset" />
+  <arg name="neighbor_intents" default="" />
+
+  <node pkg="ego_planner_driver" type="ego_planner_driver_node"
+        name="ego_planner_driver" output="screen" ns="$(arg ego_namespace)">
+    <remap from="trajectory_intent" to="/trajectory_intent" />
+    <param name="uav_id" value="$(arg uav_id)" />
+    <param name="exec_target" value="$(arg exec_target)" />
+    <param name="frame_id" value="map" />
+    <param name="local_pose_timeout_s" value="1.0" />
+    <param name="position_tolerance_m" value="0.2" />
+    <param name="arrival_stable_s" value="1.0" />
+  </node>
+
+  <node pkg="swarm_uav_executor" type="uav_executor_node.py"
+        name="uav_executor_$(arg uav_id)" output="screen" required="true">
+    <rosparam command="load" file="$(find swarm_uav_executor)/config/executor_defaults.yaml" />
+    <param name="uav_id" value="$(arg uav_id)" />
+    <param name="exec_target" value="$(arg exec_target)" />
+    <param name="service_namespace" value="$(arg service_namespace)" />
+    <param name="state_topic" value="$(arg state_topic)" />
+    <param name="interfaces_version" value="$(arg interfaces_version)" />
+    <param name="driver" value="ego_swarm" />
+    <param name="supported_commands" value="[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]" />
+    <param name="ego_swarm/namespace" value="/$(arg ego_namespace)" />
+    <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
+    <param name="safety_lease/required_for_tasks" value="true" />
+  </node>
+</launch>

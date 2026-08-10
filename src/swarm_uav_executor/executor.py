@@ -5,8 +5,8 @@ import time
 from swarm_uav_interfaces.srv import UavHoldResponse, UavTaskResponse
 from .models import (CONFLICT, DUPLICATE, HoldGoal, SafetyHoldResult, STATE_ACCEPTED,
                      STATE_COMPLETED, STATE_FAILED, TaskRecord)
-from .validation import (RequestValidationError, request_fingerprint, task_key_from_request,
-                         validate_hold_request, validate_move_to_assignment, validate_task_request)
+from .validation import (RequestValidationError, build_goal, request_fingerprint, task_key_from_request,
+                         validate_hold_request, validate_task_request)
 
 
 class UavTaskExecutor:
@@ -40,7 +40,7 @@ class UavTaskExecutor:
             health = self.driver.health()
             if not health.ready:
                 return UavTaskResponse(False, STATE_FAILED, health.error_code or "DRIVER_NOT_READY", health.message)
-            goal = validate_move_to_assignment(request.assignment)
+            goal = build_goal(request)
             record = TaskRecord(key, fingerprint, request.exec_target, request.command, float(request.timeout_s), goal,
                                 updated_at=self.clock(), message="task accepted")
             self.store.register(record); self.reporter.publish(record); self._cancel = threading.Event()

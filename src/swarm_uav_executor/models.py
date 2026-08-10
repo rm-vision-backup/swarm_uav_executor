@@ -87,6 +87,10 @@ class MotionGoal:
     y: float
     z: float
     yaw: float
+    waypoints: Tuple = ()
+    leader_id: str = ""
+    formation_follow: bool = False
+    command: str = "MOVE_TO"
 
 
 @dataclass(frozen=True)
