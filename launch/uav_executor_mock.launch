@@ -13,6 +13,7 @@
     <param name="driver" value="mock" /> <param name="mock/result_delay_s" value="$(arg result_delay_s)" />
     <param name="mock/final_success" value="$(arg final_success)" /> <param name="mock/error_code" value="$(arg error_code)" />
     <param name="mock/message" value="$(arg message)" /> <param name="mock/hold_success" value="$(arg hold_success)" />
+    <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
     <param name="safety_lease/required_for_tasks" value="$(arg safety_lease_required)" />
   </node>
 </launch>
