@@ -87,7 +87,8 @@ class MotionGoal:
     y: float
     z: float
     yaw: float
-    waypoints: Tuple = ()
+    # FOLLOW_ROUTE leader waypoints: (x, y, z, yaw) tuples (P1 leader only).
+    waypoints: Tuple[Tuple[float, float, float, float], ...] = ()
     leader_id: str = ""
     formation_follow: bool = False
     command: str = "MOVE_TO"

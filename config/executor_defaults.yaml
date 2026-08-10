@@ -24,6 +24,8 @@ ego_swarm:
   position_tolerance_m: 0.2
   arrival_stable_s: 1.0
   pose_timeout_s: 1.0
+  # 可选：配置后 END gate 额外要求 MAVROS connected/fresh/stably-disarmed
+  mavros_state_topic: ""
 mavros_position:
   namespace: /mavros
   frame_id: map

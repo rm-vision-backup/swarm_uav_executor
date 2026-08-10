@@ -6,6 +6,14 @@
   <arg name="ego_namespace" default="$(arg exec_target)" />
   <arg name="interfaces_version" default="deployment-unset" />
   <arg name="neighbor_intents" default="" />
+  <arg name="mavros_state_topic" default="" />
+
+  <!-- Identity parameters must live in the public namespace (/UAV1/*) so the
+       Python EgoSwarmDriver and topology bridge can discover them. -->
+  <group ns="$(arg ego_namespace)">
+    <param name="uav_id" value="$(arg uav_id)" />
+    <param name="exec_target" value="$(arg exec_target)" />
+  </group>
 
   <node pkg="ego_planner_driver" type="ego_planner_driver_node"
         name="ego_planner_driver" output="screen" ns="$(arg ego_namespace)">
@@ -27,9 +35,10 @@
     <param name="state_topic" value="$(arg state_topic)" />
     <param name="interfaces_version" value="$(arg interfaces_version)" />
     <param name="driver" value="ego_swarm" />
-    <param name="supported_commands" value="[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]" />
+    <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
     <param name="ego_swarm/namespace" value="/$(arg ego_namespace)" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
+    <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
     <param name="safety_lease/required_for_tasks" value="true" />
   </node>
 </launch>

@@ -9,6 +9,7 @@ underlying node only publishes position setpoints (PX4 OFFBOARD compatible).
 """
 from __future__ import annotations
 
+import copy
 import threading
 import time
 
@@ -43,7 +44,7 @@ class EgoSwarmDriver(MotionDriver):
                  ros=rospy, monotonic_clock=time.monotonic,
                  pos_tolerance_m=0.2, steady_s=1.0,
                  pose_timeout_s=1.0, neighbor_intents='',
-                 intent_type=None):
+                 intent_type=None, mavros_state_topic=""):
         self.namespace = "/" + str(namespace).strip("/")
         self.state_timeout_s = float(state_timeout_s)
         self.pos_tolerance_m = float(pos_tolerance_m)
@@ -59,6 +60,15 @@ class EgoSwarmDriver(MotionDriver):
         self._last_pose_mono_s = None
         self._run_start_mono_s = 0.0
         self._node_ready = False
+        self._mavros_state_topic = mavros_state_topic or ""
+        self._last_mavros_state = None
+        self._last_mavros_state_mono_s = None
+        self._disarmed_since_mono_s = None
+        if self._mavros_state_topic:
+            from mavros_msgs.msg import State
+            self._mavros_state_sub = ros.Subscriber(
+                self._mavros_state_topic, State, self._on_mavros_state, queue_size=1
+            )
 
         self._state_sub = ros.Subscriber(
             self.namespace + "/exec_state", String, self._on_state, queue_size=1
@@ -101,6 +111,15 @@ class EgoSwarmDriver(MotionDriver):
         with self._lock:
             self._last_pose = msg.pose
             self._last_pose_mono_s = self._monotonic_clock()
+
+    def _on_mavros_state(self, msg):
+        with self._lock:
+            self._last_mavros_state = copy.deepcopy(msg)
+            self._last_mavros_state_mono_s = self._monotonic_clock()
+            if msg.armed:
+                self._disarmed_since_mono_s = None
+            elif self._disarmed_since_mono_s is None:
+                self._disarmed_since_mono_s = self._monotonic_clock()
 
     def _publish_goal(self, goal):
         msg = PointStamped()
@@ -182,15 +201,36 @@ class EgoSwarmDriver(MotionDriver):
         return DriverHealth(ready, code, message)
 
     def can_end_safety_lease(self, disarmed_stable_s):
-        # Match MAVROS baseline: require a fresh pose and no active motion.
+        # Base gate: fresh local pose and no active trajectory.
         with self._lock:
             pose_fresh = (self._last_pose_mono_s is not None and
                           self._monotonic_clock() - self._last_pose_mono_s <= self.pose_timeout_s)
             running = self._last_cmd_reply == _STATE_EXECUTING
+            state = copy.deepcopy(self._last_mavros_state) if self._mavros_state_topic else None
+            state_received = self._last_mavros_state_mono_s
+            disarmed_since = self._disarmed_since_mono_s
         if not pose_fresh:
             return False, "local pose is stale for lease END gate"
         if running:
             return False, "trajectory still executing"
+        # When a MAVROS state topic is configured, the END gate also requires
+        # MAVROS to be connected, state fresh and the vehicle stably disarmed
+        # (mirrors MavrosPositionDriver). Without it (pure ego smoke) the base
+        # gate remains sufficient.
+        if self._mavros_state_topic:
+            if state is None:
+                return False, "MAVROS state has not been received"
+            now = self._monotonic_clock()
+            if state_received is None or now - state_received > self.pose_timeout_s:
+                return False, "MAVROS state is stale"
+            if not state.connected:
+                return False, "MAVROS is disconnected"
+            if state.armed or disarmed_since is None:
+                return False, "vehicle is armed"
+            stable_for = now - disarmed_since
+            if stable_for < float(disarmed_stable_s):
+                return False, "vehicle disarm state is not yet stable"
+            return True, "ego pose fresh, MAVROS connected and vehicle stably disarmed"
         return True, "ego pose fresh and trajectory not executing"
 
     def shutdown(self):
@@ -205,4 +245,5 @@ class EgoSwarmDriver(MotionDriver):
             steady_s=rospy.get_param("~ego_swarm/arrival_stable_s", 1.0),
             pose_timeout_s=rospy.get_param("~ego_swarm/pose_timeout_s", 1.0),
             neighbor_intents=rospy.get_param("~ego_swarm/neighbor_intents", ""),
+            mavros_state_topic=rospy.get_param("~ego_swarm/mavros_state_topic", ""),
         )

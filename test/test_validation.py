@@ -65,5 +65,45 @@ class RouteValidationTest(unittest.TestCase):
             validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
 
+    def test_route_rejects_non_mid_layer(self):
+        req = self._route()
+        req.assignment.waypoints[0].z = 5.0
+        with self.assertRaises(RequestValidationError) as caught:
+            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
+        self.assertIn("12 m", caught.exception.message)
+
+
+class LayerHeightValidationTest(unittest.TestCase):
+    def _cmd(self, command, z):
+        req = UavTaskRequest(protocol_version="1.0", mission_id="m1", group_id="GroupA",
+            command_id="c3", uav_id="A01", exec_target="UAV1", command=command,
+            timeout_s=2.0, leader_id="")
+        req.assignment = TaskAssignment(uav_id="A01")
+        req.assignment.target_pose.x = 1.0
+        req.assignment.target_pose.z = z
+        return req
+
+    def test_fault_exit_requires_8m_layer(self):
+        req = self._cmd("FAULT_EXIT", 8.0)
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        req = self._cmd("FAULT_EXIT", 15.0)
+        with self.assertRaises(RequestValidationError) as caught:
+            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
+        self.assertIn("8 m", caught.exception.message)
+
+    def test_hover_z_range(self):
+        req = self._cmd("HOVER", 10.0)
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+        req = self._cmd("HOVER", 20.0)
+        with self.assertRaises(RequestValidationError) as caught:
+            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+        self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
+
+    def test_move_to_unconstrained_z(self):
+        req = self._cmd("MOVE_TO", 16.0)
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+
 
 if __name__ == "__main__": unittest.main()

@@ -43,8 +43,20 @@ def validate_task_request(request, identity: ExecutorIdentity, supported_command
     if request.command not in supported_commands:
         raise RequestValidationError("UNSUPPORTED_COMMAND", "unsupported command: %s" % request.command)
     if request.command in ("MOVE_TO", "FAULT_EXIT", "HOVER"):
-        validate_move_to_assignment(request.assignment)
+        goal = validate_move_to_assignment(request.assignment)
+        if request.command == "FAULT_EXIT":
+            # P1 layer-height constraint: FAULT_EXIT runs in the 8 m low layer.
+            if abs(goal.z - 8.0) > 0.5:
+                raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT target z must be in the 8 m low layer")
+        elif request.command == "HOVER":
+            # HOVER must stay below the MOVE_TO high layer (16 m) and above ground.
+            if not (1.0 <= goal.z <= 16.0):
+                raise RequestValidationError("INVALID_ASSIGNMENT", "HOVER target z must be between 1 and 16 m")
     elif request.command == "FOLLOW_ROUTE":
+        # FOLLOW_ROUTE runs in the 12 m mid layer (leader route waypoints).
+        for wp in request.assignment.waypoints:
+            if abs(float(wp.z) - 12.0) > 0.5:
+                raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE waypoint z must be in the 12 m mid layer")
         if request.leader_id and request.leader_id != request.uav_id:
             raise RequestValidationError(
                 "NOT_IMPLEMENTED",
