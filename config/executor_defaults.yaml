@@ -19,7 +19,8 @@ mock:
   ready: true
   hold_success: true
 ego_swarm:
-  namespace: /UAV1
+  # 空 namespace = 本机无前缀话题（与 MAVROS /mavros/* 一致，机间靠 bridge 源前缀）
+  namespace: ""
   state_timeout_s: 5.0
   position_tolerance_m: 0.2
   arrival_stable_s: 1.0

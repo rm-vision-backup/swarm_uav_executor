@@ -40,12 +40,17 @@ def _split_topics(raw):
 class EgoSwarmDriver(MotionDriver):
     """MotionDriver over the ego_planner_driver binary via its topics."""
 
-    def __init__(self, namespace="/UAV1", state_timeout_s=5.0,
+    def __init__(self, namespace="", state_timeout_s=5.0,
                  ros=rospy, monotonic_clock=time.monotonic,
                  pos_tolerance_m=0.2, steady_s=1.0,
                  pose_timeout_s=1.0, neighbor_intents='',
                  intent_type=None, mavros_state_topic=""):
-        self.namespace = "/" + str(namespace).strip("/")
+        # Onboard premise: this node normally runs without a namespace prefix
+        # (like MAVROS /mavros/*), so an empty namespace publishes to plain
+        # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
+        # preserved for backward-compatible single-master multi-UAV setups.
+        raw = str(namespace or "").strip("/")
+        self.namespace = ("/" + raw) if raw else ""
         self.state_timeout_s = float(state_timeout_s)
         self.pos_tolerance_m = float(pos_tolerance_m)
         self.steady_s = float(steady_s)
@@ -94,8 +99,10 @@ class EgoSwarmDriver(MotionDriver):
             self._neighbor_subs.append(ros.Subscriber(
                 topic, self._intent_type, self._on_neighbor_intent, queue_size=10))
         self._ros.sleep(0.2)  # let advertisers connect before first command
+        # Identity parameter is placed at the global scope by the onboard
+        # launch (no namespace), so check "/uav_id" when namespace is empty.
         self._node_ready = self._ros.get_param(
-            self.namespace + "/uav_id", None
+            (self.namespace + "/uav_id") if self.namespace else "/uav_id", None
         ) is not None
 
     def _on_state(self, msg):
@@ -239,7 +246,7 @@ class EgoSwarmDriver(MotionDriver):
     @classmethod
     def from_ros_params(cls):
         return cls(
-            namespace=rospy.get_param("~ego_swarm/namespace", "/UAV1"),
+            namespace=rospy.get_param("~ego_swarm/namespace", ""),
             state_timeout_s=rospy.get_param("~ego_swarm/state_timeout_s", 5.0),
             pos_tolerance_m=rospy.get_param("~ego_swarm/position_tolerance_m", 0.2),
             steady_s=rospy.get_param("~ego_swarm/arrival_stable_s", 1.0),
