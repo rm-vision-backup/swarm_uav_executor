@@ -18,6 +18,8 @@ catkin_package(
 )
 
 catkin_install_python(PROGRAMS
+  scripts/pose_relay_node.py
+  scripts/setpoint_relay_node.py
   scripts/uav_executor_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

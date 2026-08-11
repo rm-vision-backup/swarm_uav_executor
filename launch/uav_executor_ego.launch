@@ -26,6 +26,20 @@
     <param name="arrival_stable_s" value="1.0" />
   </node>
 
+  <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
+  <node pkg="swarm_uav_executor" type="pose_relay_node.py"
+        name="pose_relay" output="screen">
+    <param name="source_topic" value="/mavros/local_position/pose" />
+    <param name="target_topic" value="/local_pose" />
+  </node>
+
+  <!-- setpoint 中继：/setpoint -> /mavros/setpoint_position/local（PX4 执行依赖） -->
+  <node pkg="swarm_uav_executor" type="setpoint_relay_node.py"
+        name="setpoint_relay" output="screen">
+    <param name="source_topic" value="/setpoint" />
+    <param name="target_topic" value="/mavros/setpoint_position/local" />
+  </node>
+
   <node pkg="swarm_uav_executor" type="uav_executor_node.py"
         name="uav_executor_$(arg uav_id)" output="screen" required="true">
     <rosparam command="load" file="$(find swarm_uav_executor)/config/executor_defaults.yaml" />
