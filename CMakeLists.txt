@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.0.2)
 project(swarm_uav_executor)
 
 find_package(catkin REQUIRED COMPONENTS
+  geographic_msgs
   geometry_msgs
   mavros_msgs
   nav_msgs
@@ -14,13 +15,14 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_python_setup()
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs mavros_msgs nav_msgs rospy swarm_uav_interfaces tf
+  CATKIN_DEPENDS geographic_msgs geometry_msgs mavros_msgs nav_msgs rospy swarm_uav_interfaces tf
 )
 
 catkin_install_python(PROGRAMS
   scripts/pose_relay_node.py
   scripts/setpoint_relay_node.py
   scripts/uav_executor_node.py
+  scripts/gp_origin_receiver.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

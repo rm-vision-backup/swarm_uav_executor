@@ -6,6 +6,7 @@
   <maintainer email="user@example.com">User</maintainer>
   <license>BSD</license>
   <buildtool_depend>catkin</buildtool_depend>
+  <depend>geographic_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>mavros_msgs</depend>
   <depend>nav_msgs</depend>
