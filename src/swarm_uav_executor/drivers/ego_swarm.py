@@ -307,9 +307,13 @@ class EgoSwarmDriver(MotionDriver):
     def _follower_loop(self, goal, cancel, deadline):
         """Track leader odom + formation offset with position-loop PI control."""
         leader_id = goal.leader_id
-        offset = self._formation_offsets.get(leader_id)
+        # 编队信息由 GCS_A 随任务下发（goal.formation_offset）；机载不再存编队
+        # 配置，仅当 GCS_A 未下发（全零占位）时回退本机配置作兼容。
+        offset = goal.formation_offset
+        if offset is None or all(abs(v) < 1e-9 for v in offset):
+            offset = self._formation_offsets.get(leader_id)
         if offset is None:
-            offset = goal.formation_offset
+            offset = (0.0, 0.0, 0.0)
         self._ensure_leader_odom_sub(leader_id)
         integral = [0.0, 0.0, 0.0]
         loop_dt = 1.0 / _FOLLOW_LOOP_HZ

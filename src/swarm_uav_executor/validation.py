@@ -112,6 +112,22 @@ def validate_hover_assignment(assignment) -> MotionGoal:
                       False, "HOVER", z)
 
 
+def _formation_offset_tuple(assignment):
+    """Read a formation_offset from the assignment (Pose3DYaw) as a 3-tuple.
+
+    The offset is optional; defaults to (0,0,0) when unset (e.g. leader
+    reference path or GCS_A has not injected any formation slot).
+    """
+    try:
+        off = assignment.formation_offset
+        value = (off.x, off.y, off.z)
+        if not all(math.isfinite(float(v)) for v in value):
+            return (0.0, 0.0, 0.0)
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
 def _goal_from_target_pose(target_pose, command: str) -> MotionGoal:
     values = (target_pose.x, target_pose.y, target_pose.z, target_pose.yaw)
     if not all(math.isfinite(float(value)) for value in values):
@@ -151,9 +167,10 @@ def validate_route_assignment(assignment, leader_id: str = "") -> MotionGoal:
             last = (assignment.target_pose.x, assignment.target_pose.y, assignment.target_pose.z, assignment.target_pose.yaw)
         else:
             last = (0.0, 0.0, 12.0, 0.0)
+        formation_offset = _formation_offset_tuple(assignment)
         return MotionGoal(*(float(v) for v in last), waypoints=(), leader_id=leader_id,
                           formation_follow=True, command="FOLLOW_ROUTE", layer_z=12.0,
-                          formation_offset=(0.0, 0.0, 0.0))
+                          formation_offset=formation_offset)
     if not assignment.waypoints:
         raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE leader requires waypoints")
     waypoints = [(float(p.x), float(p.y), float(p.z), float(p.yaw)) for p in assignment.waypoints]

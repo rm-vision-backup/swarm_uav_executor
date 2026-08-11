@@ -77,6 +77,21 @@ class RouteValidationTest(unittest.TestCase):
         self.assertEqual(goal.waypoints, ())
         self.assertEqual(goal.layer_z, 12.0)
 
+    def test_follower_route_reads_gcs_formation_offset(self):
+        # GCS_A injects the formation slot into assignment.formation_offset;
+        # validation must propagate it into the MotionGoal.
+        req = self._route()
+        req.leader_id = "A02"
+        req.assignment.formation_follow = True
+        req.assignment.formation_offset.x = 0.0
+        req.assignment.formation_offset.y = -5.0
+        req.assignment.formation_offset.z = 0.0
+        goal = build_goal(req)
+        self.assertTrue(goal.formation_follow)
+        self.assertEqual(goal.formation_offset, (0.0, -5.0, 0.0))
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        self.assertEqual(build_goal(req).formation_offset, (0.0, -5.0, 0.0))
+
     def test_leader_route_fills_layer_z_12(self):
         req = self._route()
         goal = build_goal(req)
