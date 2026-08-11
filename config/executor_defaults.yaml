@@ -27,6 +27,15 @@ ego_swarm:
   pose_timeout_s: 1.0
   # 可选：配置后 END gate 额外要求 MAVROS connected/fresh/stably-disarmed
   mavros_state_topic: ""
+  # Follower PI: 位置偏差 PI 控制输出 setpoint 补偿量（按周期换算）
+  follower_p_gain: 1.0
+  follower_i_gain: 0.1
+  follower_limit_xy: 2.0
+  follower_limit_z: 1.0
+  # 高度分层：MOVE_TO@15m / FOLLOW_ROUTE@12m / FAULT_EXIT@8m
+  layer_move_to: 15.0
+  layer_follow_route: 12.0
+  layer_fault_exit: 8.0
 mavros_position:
   namespace: /mavros
   frame_id: map

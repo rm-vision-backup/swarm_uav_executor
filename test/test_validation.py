@@ -46,18 +46,42 @@ class RouteValidationTest(unittest.TestCase):
         goal = build_goal(req)
         self.assertEqual(goal.leader_id, "A01")
 
-    def test_route_leader_id_different_rejected(self):
+    def test_route_leader_id_different_is_follower(self):
+        # leader_id differs from uav_id -> follower semantics, no longer rejected.
         req = self._route()
         req.leader_id = "A02"
-        with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
-        self.assertEqual(caught.exception.error_code, "NOT_IMPLEMENTED")
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        goal = build_goal(req)
+        self.assertEqual(goal.command, "FOLLOW_ROUTE")
+        self.assertTrue(goal.formation_follow)
+        self.assertEqual(goal.leader_id, "A02")
+        self.assertEqual(goal.formation_offset, (0.0, 0.0, 0.0))
 
-    def test_follower_route_rejected(self):
+    def test_follower_route_requires_distinct_leader(self):
+        # formation_follow=True but leader_id == uav_id -> invalid assignment.
         req = self._route(follower=True)
         with self.assertRaises(RequestValidationError) as caught:
             validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
-        self.assertEqual(caught.exception.error_code, "NOT_IMPLEMENTED")
+        self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
+        self.assertIn("leader_id", caught.exception.message)
+
+    def test_follower_route_without_waypoints_ok(self):
+        # A follower tracks leader+offset and does not require waypoints.
+        req = self._route()
+        req.leader_id = "A02"
+        req.assignment.waypoints[:] = []
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        goal = build_goal(req)
+        self.assertTrue(goal.formation_follow)
+        self.assertEqual(goal.leader_id, "A02")
+        self.assertEqual(goal.waypoints, ())
+        self.assertEqual(goal.layer_z, 12.0)
+
+    def test_leader_route_fills_layer_z_12(self):
+        req = self._route()
+        goal = build_goal(req)
+        self.assertEqual(goal.layer_z, 12.0)
+        self.assertFalse(goal.formation_follow)
 
     def test_route_requires_waypoints(self):
         req = self._route(); req.assignment.waypoints[:] = []
@@ -93,6 +117,29 @@ class LayerHeightValidationTest(unittest.TestCase):
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
         self.assertIn("8 m", caught.exception.message)
 
+    def test_fault_exit_accepts_waypoints_route(self):
+        # Runtime fault-exit carries exit routes as waypoints (z in the 8 m layer).
+        req = self._cmd("FAULT_EXIT", 8.0)
+        wp1 = Pose3DYaw(); wp1.x, wp1.y, wp1.z, wp1.yaw = 85.0, 75.0, 8.0, 0.0
+        wp2 = Pose3DYaw(); wp2.x, wp2.y, wp2.z, wp2.yaw = 5.0, 20.0, 8.0, 0.0
+        req.assignment.waypoints.append(wp1); req.assignment.waypoints.append(wp2)
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        goal = build_goal(req)
+        self.assertEqual(goal.command, "FAULT_EXIT")
+        self.assertEqual(goal.layer_z, 8.0)
+        self.assertEqual(goal.waypoints, ((85.0, 75.0, 8.0, 0.0), (5.0, 20.0, 8.0, 0.0)))
+        self.assertEqual(goal.x, 5.0)
+        self.assertEqual(goal.y, 20.0)
+
+    def test_fault_exit_rejects_non_8m_waypoints(self):
+        req = self._cmd("FAULT_EXIT", 8.0)
+        wp = Pose3DYaw(); wp.x, wp.y, wp.z, wp.yaw = 5.0, 20.0, 12.0, 0.0
+        req.assignment.waypoints.append(wp)
+        with self.assertRaises(RequestValidationError) as caught:
+            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
+        self.assertIn("8 m", caught.exception.message)
+
     def test_hover_z_range(self):
         req = self._cmd("HOVER", 10.0)
         validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
@@ -101,9 +148,29 @@ class LayerHeightValidationTest(unittest.TestCase):
             validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
 
+    def test_hover_accepts_placeholder_assignment(self):
+        # Runtime hold-end sends HOVER with only a uav_id (zero placeholder pose).
+        req = self._cmd("HOVER", 0.0)
+        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+        goal = build_goal(req)
+        self.assertEqual(goal.command, "HOVER")
+        self.assertEqual(goal.layer_z, 0.0)
+
     def test_move_to_unconstrained_z(self):
         req = self._cmd("MOVE_TO", 16.0)
         validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+
+    def test_build_goal_fills_layer_z(self):
+        req = self._cmd("MOVE_TO", 16.0)
+        goal = build_goal(req)
+        self.assertEqual(goal.layer_z, 15.0)
+        req = self._cmd("FAULT_EXIT", 8.0)
+        goal = build_goal(req)
+        self.assertEqual(goal.layer_z, 8.0)
+        req = self._cmd("HOVER", 10.0)
+        goal = build_goal(req)
+        # HOVER freezes at the validated goal height.
+        self.assertEqual(goal.layer_z, 10.0)
 
 
 if __name__ == "__main__": unittest.main()

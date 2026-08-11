@@ -33,6 +33,11 @@ class ExecutorConfig:
     terminal_republish_count: int = 3
     terminal_republish_interval_s: float = 0.2
     shutdown_hold_timeout_s: float = 2.0
+    # Follower PI gains: scale the position error into a setpoint offset.
+    follower_p_gain: float = 1.0        # position-error proportional gain
+    follower_i_gain: float = 0.1        # position-error integral gain
+    follower_limit_xy: float = 2.0      # max horizontal follower setpoint compensation (m/s equivalent)
+    follower_limit_z: float = 1.0       # max vertical follower compensation (m/s)
 
 
 @dataclass(frozen=True)
@@ -89,9 +94,11 @@ class MotionGoal:
     yaw: float
     # FOLLOW_ROUTE leader waypoints: (x, y, z, yaw) tuples (P1 leader only).
     waypoints: Tuple[Tuple[float, float, float, float], ...] = ()
-    leader_id: str = ""
-    formation_follow: bool = False
-    command: str = "MOVE_TO"
+    leader_id: str = ""                 # follower=leader A-id; empty for leader/single-UAV
+    formation_follow: bool = False      # True=follower formation follow semantics
+    command: str = "MOVE_TO"            # MOVE_TO / FOLLOW_ROUTE / FAULT_EXIT / HOVER
+    layer_z: float = 15.0               # target execution height layer (15/12/8/frozen); drives vertical-first
+    formation_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # follower ENU offset from leader (GCS_A slots)
 
 
 @dataclass(frozen=True)

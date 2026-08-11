@@ -6,6 +6,10 @@
   <arg name="interfaces_version" default="deployment-unset" />
   <arg name="neighbor_intents" default="" />
   <arg name="mavros_state_topic" default="" />
+  <!-- 编队槽位: YAML 字典 uav_id -> [x, y, z]（ENU，相对 leader），可空 -->
+  <arg name="formation_offsets" default="{}" />
+  <!-- leader odom 话题前缀: 如空则自动按 /<leader>/mavros/local_position/odom 构造 -->
+  <arg name="leader_odom_topic_prefix" default="" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the
        Python EgoSwarmDriver and topology bridge can discover them. -->
@@ -35,6 +39,8 @@
     <param name="ego_swarm/namespace" value="" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
     <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
+    <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
+    <param name="ego_swarm/leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <param name="safety_lease/required_for_tasks" value="true" />
   </node>
 </launch>

@@ -4,6 +4,7 @@ project(swarm_uav_executor)
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   mavros_msgs
+  nav_msgs
   rospy
   rostest
   swarm_uav_interfaces
@@ -13,7 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_python_setup()
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs mavros_msgs rospy swarm_uav_interfaces tf
+  CATKIN_DEPENDS geometry_msgs mavros_msgs nav_msgs rospy swarm_uav_interfaces tf
 )
 
 catkin_install_python(PROGRAMS
@@ -32,5 +33,6 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_mock_driver.py)
   catkin_add_nosetests(test/test_mavros_position_driver.py)
   catkin_add_nosetests(test/test_safety_lease.py)
+  catkin_add_nosetests(test/test_ego_swarm_driver.py)
   add_rostest(test/uav_executor_rostest.test)
 endif()

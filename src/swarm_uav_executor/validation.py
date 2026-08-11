@@ -42,61 +42,154 @@ def validate_task_request(request, identity: ExecutorIdentity, supported_command
         raise RequestValidationError("INVALID_TIMEOUT", "timeout_s must be finite and positive")
     if request.command not in supported_commands:
         raise RequestValidationError("UNSUPPORTED_COMMAND", "unsupported command: %s" % request.command)
-    if request.command in ("MOVE_TO", "FAULT_EXIT", "HOVER"):
-        goal = validate_move_to_assignment(request.assignment)
-        if request.command == "FAULT_EXIT":
-            # P1 layer-height constraint: FAULT_EXIT runs in the 8 m low layer.
-            if abs(goal.z - 8.0) > 0.5:
-                raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT target z must be in the 8 m low layer")
-        elif request.command == "HOVER":
-            # HOVER must stay below the MOVE_TO high layer (16 m) and above ground.
-            if not (1.0 <= goal.z <= 16.0):
-                raise RequestValidationError("INVALID_ASSIGNMENT", "HOVER target z must be between 1 and 16 m")
+    if request.command == "MOVE_TO":
+        validate_move_to_assignment(request.assignment)
+    elif request.command == "FAULT_EXIT":
+        # FAULT_EXIT runs in the 8 m low layer; accepts either a single
+        # target_pose or an exit route carried as waypoints.
+        validate_fault_exit_assignment(request.assignment)
+    elif request.command == "HOVER":
+        validate_hover_assignment(request.assignment)
     elif request.command == "FOLLOW_ROUTE":
         # FOLLOW_ROUTE runs in the 12 m mid layer (leader route waypoints).
         for wp in request.assignment.waypoints:
             if abs(float(wp.z) - 12.0) > 0.5:
                 raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE waypoint z must be in the 12 m mid layer")
         if request.leader_id and request.leader_id != request.uav_id:
-            raise RequestValidationError(
-                "NOT_IMPLEMENTED",
-                "FOLLOW_ROUTE follower semantics (leader_id differs from uav_id) is P2")
-        validate_route_assignment(request.assignment)
+            # Follower semantics: leader_id differs from uav_id -> formation follow.
+            _validate_follower_assignment(request.assignment, request.leader_id, identity)
+        else:
+            validate_route_assignment(request.assignment)
 
 
 def validate_move_to_assignment(assignment) -> MotionGoal:
     if assignment.formation_follow or assignment.target_id or assignment.waypoints:
         raise RequestValidationError("INVALID_ASSIGNMENT", "MOVE_TO accepts only target_pose")
-    values = (assignment.target_pose.x, assignment.target_pose.y, assignment.target_pose.z, assignment.target_pose.yaw)
+    return _goal_from_target_pose(assignment.target_pose, "MOVE_TO")
+
+
+def validate_fault_exit_assignment(assignment) -> MotionGoal:
+    """FAULT_EXIT accepts a single target_pose or an exit waypoint route.
+
+    Both forms must stay in the 8 m low layer. When waypoints are given, the
+    goal keeps them so the driver can plan the exit route after the vertical
+    transition.
+    """
+    if assignment.waypoints:
+        waypoints = [(float(p.x), float(p.y), float(p.z), float(p.yaw)) for p in assignment.waypoints]
+        if not all(math.isfinite(v) for wp in waypoints for v in wp):
+            raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT waypoints must be finite")
+        for wp in waypoints:
+            if abs(wp[2] - 8.0) > 0.5:
+                raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT waypoint z must be in the 8 m low layer")
+        last = waypoints[-1]
+        return MotionGoal(last[0], last[1], last[2], last[3],
+                          waypoints=tuple(waypoints), command="FAULT_EXIT", layer_z=8.0)
+    if assignment.formation_follow or assignment.target_id:
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT accepts only target_pose or waypoints")
+    goal = _goal_from_target_pose(assignment.target_pose, "FAULT_EXIT")
+    if abs(goal.z - 8.0) > 0.5:
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FAULT_EXIT target z must be in the 8 m low layer")
+    return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, (), goal.leader_id,
+                      False, "FAULT_EXIT", 8.0)
+
+
+def validate_hover_assignment(assignment) -> MotionGoal:
+    """HOVER accepts an empty/placeholder assignment.
+
+    The runtime sends HOVER assignments with only a uav_id (target_pose is a
+    zero placeholder). The frozen-height semantics is resolved by the driver
+    from the current local pose, so only a non-zero height needs the 1..16 m
+    sanity bound.
+    """
+    if assignment.formation_follow or assignment.target_id or assignment.waypoints:
+        raise RequestValidationError("INVALID_ASSIGNMENT", "HOVER accepts only target_pose")
+    goal = _goal_from_target_pose(assignment.target_pose, "HOVER")
+    z = goal.z
+    if z != 0.0 and not (1.0 <= z <= 16.0):
+        raise RequestValidationError("INVALID_ASSIGNMENT", "HOVER target z must be between 1 and 16 m")
+    return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, (), goal.leader_id,
+                      False, "HOVER", z)
+
+
+def _goal_from_target_pose(target_pose, command: str) -> MotionGoal:
+    values = (target_pose.x, target_pose.y, target_pose.z, target_pose.yaw)
     if not all(math.isfinite(float(value)) for value in values):
-        raise RequestValidationError("INVALID_ASSIGNMENT", "MOVE_TO target_pose must be finite")
+        raise RequestValidationError("INVALID_ASSIGNMENT", "%s target_pose must be finite" % command)
     return MotionGoal(*(float(value) for value in values))
 
 
-def validate_route_assignment(assignment) -> MotionGoal:
-    if assignment.formation_follow:
-        raise RequestValidationError("NOT_IMPLEMENTED", "FOLLOW_ROUTE formation follow is P2")
+def _validate_follower_assignment(assignment, leader_id: str, identity: ExecutorIdentity) -> None:
+    """Validate a FOLLOW_ROUTE follower assignment.
+
+    The follower does not need waypoints: it tracks the leader pose plus a
+    formation offset resolved on the driver side. Any waypoints carried are
+    only a leader reference and must still be finite.
+    """
+    if not str(leader_id or "").strip():
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE follower requires leader_id")
+    if str(leader_id) == str(identity.uav_id):
+        raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE follower leader_id must differ from uav_id")
+    if assignment.waypoints:
+        waypoints = [(float(p.x), float(p.y), float(p.z), float(p.yaw)) for p in assignment.waypoints]
+        if not all(math.isfinite(v) for wp in waypoints for v in wp):
+            raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE waypoints must be finite")
+
+
+def validate_route_assignment(assignment, leader_id: str = "") -> MotionGoal:
+    # Follower semantics: explicit formation_follow flag OR a leader_id that
+    # differs from the local uav_id (both paths accepted, waypoints optional).
+    follower = bool(assignment.formation_follow) or bool(
+        str(leader_id or "").strip() and str(leader_id) != str(assignment.uav_id))
+    if follower:
+        if not str(leader_id or "").strip() or str(leader_id) == str(assignment.uav_id):
+            raise RequestValidationError(
+                "INVALID_ASSIGNMENT", "FOLLOW_ROUTE follower requires leader_id different from uav_id")
+        # target_pose is only a leader reference for the follower; the driver
+        # resolves the actual target from leader odom + formation_offset.
+        if assignment.target_pose:
+            last = (assignment.target_pose.x, assignment.target_pose.y, assignment.target_pose.z, assignment.target_pose.yaw)
+        else:
+            last = (0.0, 0.0, 12.0, 0.0)
+        return MotionGoal(*(float(v) for v in last), waypoints=(), leader_id=leader_id,
+                          formation_follow=True, command="FOLLOW_ROUTE", layer_z=12.0,
+                          formation_offset=(0.0, 0.0, 0.0))
     if not assignment.waypoints:
         raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE leader requires waypoints")
     waypoints = [(float(p.x), float(p.y), float(p.z), float(p.yaw)) for p in assignment.waypoints]
     if not all(math.isfinite(v) for wp in waypoints for v in wp):
         raise RequestValidationError("INVALID_ASSIGNMENT", "FOLLOW_ROUTE waypoints must be finite")
     last = waypoints[-1]
-    return MotionGoal(last[0], last[1], last[2], last[3], waypoints=tuple(waypoints), command="FOLLOW_ROUTE")
+    return MotionGoal(last[0], last[1], last[2], last[3], waypoints=tuple(waypoints),
+                      leader_id=leader_id, command="FOLLOW_ROUTE", layer_z=12.0)
 
 
 def build_goal(request) -> MotionGoal:
-    if request.command in ("MOVE_TO", "FAULT_EXIT", "HOVER"):
+    if request.command == "MOVE_TO":
         goal = validate_move_to_assignment(request.assignment)
+        # layer_z drives the vertical-first transition: MOVE_TO@15.
         return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, (), request.leader_id,
-                          bool(request.assignment.formation_follow), request.command)
-    if request.command == "FOLLOW_ROUTE":
-        # FOLLOW_ROUTE reaching the driver means the leader role: validation
-        # already rejects formation_follow as NOT_IMPLEMENTED, so keep the
-        # leader_id for traceability instead of dropping it on the floor.
-        goal = validate_route_assignment(request.assignment)
+                          False, request.command, 15.0)
+    if request.command == "FAULT_EXIT":
+        goal = validate_fault_exit_assignment(request.assignment)
         return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, goal.waypoints,
-                          request.leader_id, False, goal.command)
+                          request.leader_id, False, request.command, 8.0)
+    if request.command == "HOVER":
+        goal = validate_hover_assignment(request.assignment)
+        # HOVER freezes at the current local pose; layer_z carries the
+        # validated/placeholder goal height for traceability.
+        return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, (), request.leader_id,
+                          False, request.command, goal.z)
+    if request.command == "FOLLOW_ROUTE":
+        goal = validate_route_assignment(request.assignment, request.leader_id)
+        follower = bool(request.assignment.formation_follow) or bool(
+            request.leader_id and request.leader_id != request.uav_id)
+        if follower:
+            return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, goal.waypoints,
+                              request.leader_id, True, goal.command, 12.0,
+                              goal.formation_offset)
+        return MotionGoal(goal.x, goal.y, goal.z, goal.yaw, goal.waypoints,
+                          request.leader_id, False, goal.command, 12.0)
     raise RequestValidationError("UNSUPPORTED_COMMAND", "unsupported command: %s" % request.command)
 
 
