@@ -59,7 +59,7 @@ def _split_topics(raw):
 class EgoSwarmDriver(MotionDriver):
     """MotionDriver over the ego_planner_driver binary via its topics."""
 
-    def __init__(self, namespace="", state_timeout_s=5.0,
+    def __init__(self, namespace="", state_timeout_s=200.0,
                  ros=rospy, monotonic_clock=time.monotonic,
                  pos_tolerance_m=0.2, steady_s=1.0,
                  pose_timeout_s=1.0, neighbor_intents='',
@@ -456,7 +456,7 @@ class EgoSwarmDriver(MotionDriver):
     def from_ros_params(cls):
         return cls(
             namespace=rospy.get_param("~ego_swarm/namespace", ""),
-            state_timeout_s=rospy.get_param("~ego_swarm/state_timeout_s", 5.0),
+            state_timeout_s=rospy.get_param("~ego_swarm/state_timeout_s", 200.0),
             pos_tolerance_m=rospy.get_param("~ego_swarm/position_tolerance_m", 0.2),
             steady_s=rospy.get_param("~ego_swarm/arrival_stable_s", 1.0),
             pose_timeout_s=rospy.get_param("~ego_swarm/pose_timeout_s", 1.0),
