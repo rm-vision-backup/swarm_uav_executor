@@ -1,64 +1,120 @@
 #!/usr/bin/env python3
-"""机载全局原点接收器（每机一个实例）。
+"""Apply one frozen GCS origin through MAVROS and verify its ROS readback."""
+import math
+import threading
 
-经 bridge 订阅 GCS_A 发布的 `/GCS_A/group_a/gp_origin`
-（`geographic_msgs/GeoPointStamped`），收到后以 1Hz 周期转发到本机
-`/mavros/global_position/set_gp_origin`（该处是 MAVROS 的 topic 插件，
-非 service），使本机 local ENU 坐标系与 GCS_A 统一原点对齐。
-
-forward_origin 1Hz 循环设置次数上限为 max_origin_sets（默认 5 次）：
-  - 起飞前持续设置以规避 RTK 定位完成较晚导致的坐标突变；
-  - 达到上限后停止改写飞控原点，避免无谓持续干扰飞控坐标状态；
-  - 本机 armed 后也停止周期转发（最后一次原点仍生效）。
-
-用法（由 uav_offboard_ego.launch 装配，也可单独运行）:
-    rosrun swarm_uav_executor gp_origin_receiver.py
-"""
 import rospy
 from geographic_msgs.msg import GeoPointStamped
 from mavros_msgs.msg import State
+from std_msgs.msg import Bool
 
-DEFAULT_MAX_ORIGIN_SETS = 5
+
+def horizontal_error_m(a, b):
+    radius = 6371008.8
+    lat1 = math.radians(a.latitude)
+    lat2 = math.radians(b.latitude)
+    dlat = lat2 - lat1
+    dlon = math.radians(b.longitude - a.longitude)
+    h = math.sin(dlat / 2.0) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
+    return radius * 2.0 * math.asin(min(1.0, math.sqrt(h)))
 
 
 class GpOriginReceiver:
     def __init__(self):
+        self._lock = threading.RLock()
         self.origin = None
+        self.state_received = False
+        self.connected = False
         self.armed = False
-        self.origin_sent = 0
-        self.max_origin_sets = rospy.get_param("~max_origin_sets",
-                                               DEFAULT_MAX_ORIGIN_SETS)
+        self.confirmed = False
+        self.last_send = rospy.Time(0)
+        self.attempts = 0
+        self.max_attempts = int(rospy.get_param("~max_attempts", 10))
+        self.retry_s = float(rospy.get_param("~retry_s", 1.0))
+        self.horizontal_tolerance_m = float(rospy.get_param("~horizontal_tolerance_m", 0.1))
+        self.altitude_tolerance_m = float(rospy.get_param("~altitude_tolerance_m", 0.1))
         self.origin_pub = rospy.Publisher(
             "/mavros/global_position/set_gp_origin", GeoPointStamped, queue_size=1)
+        self.confirmed_pub = rospy.Publisher("/gp_origin_confirmed", Bool, queue_size=1, latch=True)
         rospy.Subscriber("/GCS_A/group_a/gp_origin", GeoPointStamped,
-                         self.on_gp_origin, queue_size=1)
+                         self.on_origin, queue_size=1)
+        rospy.Subscriber("/mavros/global_position/gp_origin", GeoPointStamped,
+                         self.on_readback, queue_size=1)
         rospy.Subscriber("/mavros/state", State, self.on_state, queue_size=1)
-        rospy.Timer(rospy.Duration(1.0), self.forward_origin)
-        rospy.loginfo(
-            "gp_origin_receiver: subscribe /GCS_A/group_a/gp_origin, "
-            "forward to /mavros/global_position/set_gp_origin "
-            "(max_origin_sets=%d)" % self.max_origin_sets)
+        rospy.Timer(rospy.Duration(0.1), self.on_timer)
+        self.confirmed_pub.publish(Bool(False))
 
-    def on_gp_origin(self, msg):
-        self.origin = msg
-        # 收到即立即设置一次：让原点尽快生效
-        if not self.armed and self.origin_sent < self.max_origin_sets:
-            self.origin_pub.publish(msg)
-            self.origin_sent += 1
+    @staticmethod
+    def _same_origin(a, b):
+        return (a is not None and b is not None and
+                a.position.latitude == b.position.latitude and
+                a.position.longitude == b.position.longitude and
+                a.position.altitude == b.position.altitude)
+
+    def on_origin(self, msg):
+        with self._lock:
+            if self.confirmed and self._same_origin(self.origin, msg):
+                return
+            if self.state_received and self.armed:
+                rospy.logerr("refusing to change global origin while armed")
+                return
+            self.origin = msg
+            self.confirmed = False
+            self.attempts = 0
+            self.last_send = rospy.Time(0)
+            self.confirmed_pub.publish(Bool(False))
+        self._send()
 
     def on_state(self, msg):
-        self.armed = msg.armed
+        with self._lock:
+            self.state_received = True
+            self.connected = bool(msg.connected)
+            self.armed = bool(msg.armed)
+            should_send = (self.connected and not self.armed and self.origin is not None
+                           and not self.confirmed and self.attempts == 0)
+        if should_send:
+            self._send()
 
-    def forward_origin(self, _event):
-        # 起飞前 1Hz 重复设置（规避 RTK 延迟坐标突变）；
-        # armed 后或达到次数上限后停止，避免干扰飞行中的坐标系
-        if self.armed:
-            return
-        if self.origin_sent >= self.max_origin_sets:
-            return
-        if self.origin is not None:
-            self.origin_pub.publish(self.origin)
-            self.origin_sent += 1
+    def _send(self):
+        with self._lock:
+            if (self.origin is None or self.confirmed or not self.state_received or
+                    not self.connected or self.armed or self.attempts >= self.max_attempts):
+                return
+            self.last_send = rospy.Time.now()
+            self.attempts += 1
+            msg = self.origin
+        self.origin_pub.publish(msg)
+
+    def on_readback(self, msg):
+        with self._lock:
+            origin = self.origin
+            sent_at = self.last_send
+            if origin is None or self.confirmed or sent_at == rospy.Time(0):
+                return
+            # MAVROS stamps the received event. Ignore a queued event that
+            # predates this receiver's most recent set request.
+            if msg.header.stamp != rospy.Time(0) and msg.header.stamp < sent_at:
+                return
+            horizontal = horizontal_error_m(origin.position, msg.position)
+            altitude = abs(origin.position.altitude - msg.position.altitude)
+            if horizontal > self.horizontal_tolerance_m or altitude > self.altitude_tolerance_m:
+                rospy.logwarn("gp_origin readback mismatch horizontal=%.3fm altitude=%.3fm", horizontal, altitude)
+                return
+            self.confirmed = True
+        self.confirmed_pub.publish(Bool(True))
+        rospy.loginfo("gp_origin confirmed horizontal=%.3fm altitude=%.3fm", horizontal, altitude)
+
+    def on_timer(self, _event):
+        with self._lock:
+            if (self.confirmed or self.origin is None or not self.state_received or
+                    not self.connected or self.armed):
+                return
+            elapsed = (rospy.Time.now() - self.last_send).to_sec() if self.last_send != rospy.Time(0) else self.retry_s
+            exhausted = self.attempts >= self.max_attempts
+        if exhausted:
+            rospy.logerr_throttle(5.0, "gp_origin confirmation exhausted %d attempts", self.max_attempts)
+        elif elapsed >= self.retry_s:
+            self._send()
 
 
 def main():

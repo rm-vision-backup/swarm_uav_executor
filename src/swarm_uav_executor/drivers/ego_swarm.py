@@ -4,8 +4,8 @@ The C++ node publishes a latched exec_state topic that this driver uses as
 the single source of truth for the motion lifecycle:
   IDLE -> EXECUTING -> COMPLETED / EGO_PLAN_FAILED / EGO_EXEC_TIMEOUT / HOLD
 
-The driver itself never arms the vehicle or switches flight mode; the
-underlying node only publishes position setpoints (PX4 OFFBOARD compatible).
+The driver owns arm/OFFBOARD for an on-demand MOVE_TO takeoff.  The C++ node
+only publishes EGO position setpoints (PX4 OFFBOARD compatible).
 
 Command semantics (four full action commands):
 - MOVE_TO / FAULT_EXIT / FOLLOW_ROUTE(leader): ego real-time planning. A pure
@@ -26,7 +26,7 @@ import time
 
 import rospy
 from geometry_msgs.msg import PointStamped, PolygonStamped, PoseStamped
-from std_msgs.msg import Empty, String
+from std_msgs.msg import Bool, Empty, Float64, String
 
 from .base import MotionDriver
 from ..models import DriverHealth, HoldGoal, MotionGoal, MotionResult
@@ -44,7 +44,6 @@ _MONITOR_HZ = 20.0
 _LAYER_MOVE_TO = 15.0
 _LAYER_FOLLOW_ROUTE = 12.0
 _LAYER_FAULT_EXIT = 8.0
-_LAYER_TOL = 0.5          # close to the target layer: skip the vertical transition
 _HOVER_SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
 _FOLLOW_LOOP_HZ = 10.0         # follower PI control update rate
@@ -54,6 +53,12 @@ def _split_topics(raw):
     if not raw:
         return []
     return [x.strip() for x in raw.split(',') if x.strip()]
+
+
+def _default_neighbor_odom_topics(exec_target):
+    own = str(exec_target or "").strip("/")
+    return ",".join("/UAV%d/mavros/local_position/odom" % idx
+                    for idx in range(1, 16) if "UAV%d" % idx != own)
 
 
 class EgoSwarmDriver(MotionDriver):
@@ -67,7 +72,13 @@ class EgoSwarmDriver(MotionDriver):
                  follower_p_gain=1.0, follower_i_gain=0.1,
                  follower_limit_xy=2.0, follower_limit_z=1.0,
                  layer_move_to=15.0, layer_follow_route=12.0, layer_fault_exit=8.0,
-                 formation_offsets=None, leader_odom_topic_prefix=""):
+                 formation_offsets=None, leader_odom_topic_prefix="",
+                 arm_service="/mavros/cmd/arming", mode_service="/mavros/set_mode",
+                 origin_confirmed_topic="/gp_origin_confirmed",
+                 takeoff_height_m=5.0, takeoff_stable_s=2.0,
+                 vertical_speed_mps=1.0, vertical_accel_mps2=0.5,
+                 neighbor_odom_topics='', min_horizontal_distance_m=1.0,
+                 min_vertical_distance_m=2.0):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -91,12 +102,15 @@ class EgoSwarmDriver(MotionDriver):
         self._mavros_state_topic = mavros_state_topic or ""
         self._last_mavros_state = None
         self._last_mavros_state_mono_s = None
+        self._origin_confirmed = False
         self._disarmed_since_mono_s = None
         if self._mavros_state_topic:
             from mavros_msgs.msg import State
             self._mavros_state_sub = ros.Subscriber(
                 self._mavros_state_topic, State, self._on_mavros_state, queue_size=1
             )
+        self._origin_confirmed_sub = ros.Subscriber(
+            origin_confirmed_topic, Bool, self._on_origin_confirmed, queue_size=1)
 
         self._state_sub = ros.Subscriber(
             self.namespace + "/exec_state", String, self._on_state, queue_size=1
@@ -106,6 +120,9 @@ class EgoSwarmDriver(MotionDriver):
         )
         self._goal_pub = ros.Publisher(
             self.namespace + "/goal", PointStamped, queue_size=1
+        )
+        self._goal_yaw_pub = ros.Publisher(
+            self.namespace + "/goal_yaw", Float64, queue_size=1
         )
         self._waypoints_pub = ros.Publisher(
             self.namespace + "/waypoints", PolygonStamped, queue_size=1
@@ -117,6 +134,9 @@ class EgoSwarmDriver(MotionDriver):
         self._setpoint_pub = ros.Publisher(
             self.namespace + "/setpoint", PoseStamped, queue_size=1
         )
+        self._direct_control_pub = ros.Publisher(
+            self.namespace + "/direct_control_active", Bool, queue_size=1)
+        self._direct_control_pub.publish(Bool(False))
         from swarm_uav_interfaces.msg import UavTrajectoryIntent
         self._intent_type = intent_type or UavTrajectoryIntent
         self._neighbor_intent_pub = ros.Publisher(
@@ -146,6 +166,20 @@ class EgoSwarmDriver(MotionDriver):
         self._leader_odom_topic = ""
         self._last_leader_pose = None
         self._last_leader_odom_mono_s = None
+        self._neighbor_poses = {}
+        self._neighbor_odom_subs = []
+        from nav_msgs.msg import Odometry
+        for topic in _split_topics(neighbor_odom_topics):
+            self._neighbor_odom_subs.append(ros.Subscriber(
+                topic, Odometry, self._on_neighbor_odom, callback_args=topic, queue_size=1))
+        self._min_horizontal_distance_m = float(min_horizontal_distance_m)
+        self._min_vertical_distance_m = float(min_vertical_distance_m)
+        self._arm_service = arm_service
+        self._mode_service = mode_service
+        self._takeoff_height_m = float(takeoff_height_m)
+        self._takeoff_stable_s = float(takeoff_stable_s)
+        self._vertical_speed_mps = float(vertical_speed_mps)
+        self._vertical_accel_mps2 = float(vertical_accel_mps2)
 
     def _on_state(self, msg):
         with self._lock:
@@ -170,10 +204,32 @@ class EgoSwarmDriver(MotionDriver):
             elif self._disarmed_since_mono_s is None:
                 self._disarmed_since_mono_s = self._monotonic_clock()
 
+    def _on_origin_confirmed(self, msg):
+        with self._lock:
+            self._origin_confirmed = bool(msg.data)
+
     def _on_leader_odom(self, msg):
         with self._lock:
             self._last_leader_pose = msg.pose.pose
             self._last_leader_odom_mono_s = self._monotonic_clock()
+
+    def _on_neighbor_odom(self, msg, topic):
+        with self._lock:
+            self._neighbor_poses[topic] = (copy.deepcopy(msg.pose.pose), self._monotonic_clock())
+
+    def _distance_safe(self, own_pose):
+        now = self._monotonic_clock()
+        with self._lock:
+            neighbors = tuple(self._neighbor_poses.values())
+        for pose, stamp in neighbors:
+            if now - stamp > self.pose_timeout_s:
+                continue
+            horizontal = math.hypot(own_pose.position.x - pose.position.x,
+                                    own_pose.position.y - pose.position.y)
+            vertical = abs(own_pose.position.z - pose.position.z)
+            if horizontal < self._min_horizontal_distance_m and vertical < self._min_vertical_distance_m:
+                return False
+        return True
 
     def _leader_odom_topic_for(self, leader_id):
         if self._leader_odom_topic_prefix:
@@ -252,23 +308,122 @@ class EgoSwarmDriver(MotionDriver):
         return self._layer_move_to
 
     def _plan_vertical_transition(self, layer_z, cancel, deadline):
-        """Pure vertical transition to the command layer when far from it."""
+        """Direct constrained vertical transition with frozen x/y/yaw."""
         with self._lock:
             pose = self._last_pose
         if pose is None:
             return MotionResult(False, "POSE_STALE", "no local pose for vertical transition")
         cur_z = pose.position.z
-        cur_x = pose.position.x
-        cur_y = pose.position.y
-        if abs(cur_z - layer_z) <= _LAYER_TOL:
+        if abs(cur_z - layer_z) <= self.pos_tolerance_m:
             return MotionResult(True, "", "already at target layer")
-        vertical_goal = MotionGoal(cur_x, cur_y, layer_z, 0.0, command="MOVE_TO")
-        return self._plan_horizontal(vertical_goal, cancel, deadline)
+        captured = copy.deepcopy(pose)
+        direction = 1.0 if layer_z > cur_z else -1.0
+        speed = 0.0
+        last = self._monotonic_clock()
+        arrived_since = None
+        self._direct_control_pub.publish(Bool(True))
+        try:
+            while not self._shutdown:
+                now = self._monotonic_clock()
+                if cancel is not None and cancel.is_set():
+                    return MotionResult(False, "COMMAND_HELD", "vertical motion cancelled")
+                if now >= float(deadline):
+                    return MotionResult(False, "LOCAL_TIMEOUT", "vertical motion deadline exceeded")
+                dt = max(0.001, min(0.1, now - last))
+                last = now
+                with self._lock:
+                    own = copy.deepcopy(self._last_pose)
+                if own is None:
+                    return MotionResult(False, "POSE_STALE", "local pose lost during vertical motion")
+                if not self._distance_safe(own):
+                    return MotionResult(False, "MIN_DISTANCE_BREACH",
+                                        "neighbor distance breached during vertical motion")
+                remaining = abs(layer_z - own.position.z)
+                braking_speed = math.sqrt(max(0.0, 2.0 * self._vertical_accel_mps2 * remaining))
+                target_speed = min(self._vertical_speed_mps, braking_speed)
+                speed = min(target_speed, speed + self._vertical_accel_mps2 * dt)
+                next_z = own.position.z + direction * speed * dt
+                if (direction > 0 and next_z > layer_z) or (direction < 0 and next_z < layer_z):
+                    next_z = layer_z
+                captured.position.z = next_z
+                self._publish_setpoint(captured)
+                dx = own.position.x - captured.position.x
+                dy = own.position.y - captured.position.y
+                position_error = math.sqrt(dx * dx + dy * dy + remaining * remaining)
+                if position_error <= self.pos_tolerance_m:
+                    if arrived_since is None:
+                        arrived_since = now
+                    elif now - arrived_since >= self.steady_s:
+                        return MotionResult(True, "", "vertical layer reached")
+                else:
+                    arrived_since = None
+                time.sleep(1.0 / _HOVER_SETPOINT_HZ)
+        finally:
+            self._direct_control_pub.publish(Bool(False))
+        return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
+
+    def _ensure_takeoff(self, cancel, deadline):
+        if not self._mavros_state_topic:
+            return MotionResult(True, "", "takeoff gate disabled without MAVROS state")
+        with self._lock:
+            state = copy.deepcopy(self._last_mavros_state)
+            origin_confirmed = self._origin_confirmed
+            pose = copy.deepcopy(self._last_pose)
+        if state is not None and state.armed:
+            if state.mode == "OFFBOARD":
+                return MotionResult(True, "", "vehicle already armed in OFFBOARD")
+            from mavros_msgs.srv import SetMode
+            mode = self._ros.ServiceProxy(self._mode_service, SetMode)
+            response = mode(0, "OFFBOARD")
+            if not response.mode_sent:
+                return MotionResult(False, "OFFBOARD_REJECTED", "PX4 rejected OFFBOARD mode")
+            wait_end = min(float(deadline), self._monotonic_clock() + 5.0)
+            while self._monotonic_clock() < wait_end:
+                with self._lock:
+                    current = copy.deepcopy(self._last_mavros_state)
+                if current is not None and current.armed and current.mode == "OFFBOARD":
+                    return MotionResult(True, "", "armed vehicle restored to OFFBOARD")
+                time.sleep(0.05)
+            return MotionResult(False, "OFFBOARD_TIMEOUT", "OFFBOARD state was not observed")
+        if state is None or not state.connected:
+            return MotionResult(False, "MAVROS_NOT_READY", "MAVROS state is unavailable or disconnected")
+        if not origin_confirmed:
+            return MotionResult(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
+        if pose is None:
+            return MotionResult(False, "POSE_STALE", "no local pose for takeoff")
+        from mavros_msgs.srv import CommandBool, SetMode
+        arm = self._ros.ServiceProxy(self._arm_service, CommandBool)
+        mode = self._ros.ServiceProxy(self._mode_service, SetMode)
+        # Setpoint stream exists in IDLE. Request OFFBOARD before arming, as
+        # required by the existing SITL deployment and accepted by real PX4.
+        mode_response = mode(0, "OFFBOARD")
+        if not mode_response.mode_sent:
+            return MotionResult(False, "OFFBOARD_REJECTED", "PX4 rejected OFFBOARD mode")
+        arm_response = arm(True)
+        if not arm_response.success:
+            return MotionResult(False, "ARM_REJECTED", "PX4 rejected arm request")
+        wait_end = min(float(deadline), self._monotonic_clock() + 5.0)
+        while self._monotonic_clock() < wait_end:
+            with self._lock:
+                current = copy.deepcopy(self._last_mavros_state)
+            if current is not None and current.armed and current.mode == "OFFBOARD":
+                break
+            time.sleep(0.05)
+        else:
+            return MotionResult(False, "ARM_OFFBOARD_TIMEOUT", "armed/OFFBOARD state was not observed")
+        old_steady = self.steady_s
+        self.steady_s = self._takeoff_stable_s
+        try:
+            return self._plan_vertical_transition(pose.position.z + self._takeoff_height_m,
+                                                  cancel, deadline)
+        finally:
+            self.steady_s = old_steady
 
     def _plan_horizontal(self, goal, cancel, deadline):
         with self._lock:
             self._last_cmd_reply = None
             self._run_start_mono_s = self._monotonic_clock()
+        self._goal_yaw_pub.publish(Float64(goal.yaw))
         if goal.waypoints:
             self._publish_waypoints(goal)
         else:
@@ -284,24 +439,28 @@ class EgoSwarmDriver(MotionDriver):
         captured = copy.deepcopy(pose)
         arrived_since = None
         rate = 1.0 / _HOVER_SETPOINT_HZ
-        while not self._shutdown:
-            if cancel is not None and cancel.is_set():
-                return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
-            if self._monotonic_clock() >= float(deadline):
-                return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
-            self._publish_setpoint(captured)
-            now = self._monotonic_clock()
-            with self._lock:
-                own = self._last_pose
-            if own is not None and self._near(own, captured):
-                if arrived_since is None:
-                    arrived_since = now
-                elif now - arrived_since >= self.steady_s:
-                    self._emit_completed()
-                    return MotionResult(True, "", "hover frozen setpoint reached")
-            else:
-                arrived_since = None
-            time.sleep(rate)
+        self._direct_control_pub.publish(Bool(True))
+        try:
+            while not self._shutdown:
+                if cancel is not None and cancel.is_set():
+                    return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
+                if self._monotonic_clock() >= float(deadline):
+                    return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
+                self._publish_setpoint(captured)
+                now = self._monotonic_clock()
+                with self._lock:
+                    own = self._last_pose
+                if own is not None and self._near(own, captured):
+                    if arrived_since is None:
+                        arrived_since = now
+                    elif now - arrived_since >= self.steady_s:
+                        self._emit_completed()
+                        return MotionResult(True, "", "hover frozen setpoint reached")
+                else:
+                    arrived_since = None
+                time.sleep(rate)
+        finally:
+            self._direct_control_pub.publish(Bool(False))
         return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
 
     def _follower_loop(self, goal, cancel, deadline):
@@ -321,75 +480,103 @@ class EgoSwarmDriver(MotionDriver):
         last_calc = None
         last_setpoint = None
         arrived_since = None
-        while not self._shutdown:
-            if cancel is not None and cancel.is_set():
-                return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
-            if self._monotonic_clock() >= float(deadline):
-                return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
-            now = self._monotonic_clock()
-            with self._lock:
-                leader_pose = self._last_leader_pose
-                leader_ts = self._last_leader_odom_mono_s
-                own_pose = self._last_pose
-            if leader_pose is None or leader_ts is None or now - leader_ts > _FOLLOW_POSE_TIMEOUT_S:
-                return MotionResult(False, "LEADER_LOST", "leader odom timed out")
-            if own_pose is None:
-                return MotionResult(False, "POSE_STALE", "no local pose for follower loop")
-            target = (leader_pose.position.x + offset[0],
-                      leader_pose.position.y + offset[1],
-                      leader_pose.position.z + offset[2])
-            if last_calc is None or now - last_calc >= loop_dt:
-                error = (target[0] - own_pose.position.x,
-                         target[1] - own_pose.position.y,
-                         target[2] - own_pose.position.z)
-                integral = [integral[i] + error[i] * loop_dt for i in range(3)]
-                vel = [self._follower_p_gain * error[i] + self._follower_i_gain * integral[i]
-                       for i in range(3)]
-                # Clamp the horizontal compensation and the vertical component.
-                k_xy = math.hypot(vel[0], vel[1])
-                if k_xy > self._follower_limit_xy:
-                    scale = self._follower_limit_xy / k_xy
-                    vel[0] *= scale
-                    vel[1] *= scale
-                if abs(vel[2]) > self._follower_limit_z:
-                    vel[2] = math.copysign(self._follower_limit_z, vel[2])
-                setpoint = PoseStamped()
-                setpoint.header.stamp = self._ros.Time.now()
-                setpoint.pose.position.x = own_pose.position.x + vel[0] * loop_dt
-                setpoint.pose.position.y = own_pose.position.y + vel[1] * loop_dt
-                setpoint.pose.position.z = own_pose.position.z + vel[2] * loop_dt
-                setpoint.pose.orientation = own_pose.orientation
-                last_setpoint = setpoint
-                last_calc = now
-            if last_setpoint is not None:
-                self._setpoint_pub.publish(last_setpoint)
-            target_pose = type("PoseLike", (), {"position": type(
-                "PosLike", (), {"x": target[0], "y": target[1], "z": target[2]})()})()
-            if self._near(own_pose, target_pose):
-                if arrived_since is None:
-                    arrived_since = now
-                elif now - arrived_since >= self.steady_s:
-                    self._emit_completed()
-                    return MotionResult(True, "", "follower formation reached")
-            else:
-                arrived_since = None
-            time.sleep(publish_dt)
+        self._direct_control_pub.publish(Bool(True))
+        try:
+            while not self._shutdown:
+                if cancel is not None and cancel.is_set():
+                    return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
+                if self._monotonic_clock() >= float(deadline):
+                    return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
+                now = self._monotonic_clock()
+                with self._lock:
+                    leader_pose = self._last_leader_pose
+                    leader_ts = self._last_leader_odom_mono_s
+                    own_pose = self._last_pose
+                if leader_pose is None or leader_ts is None or now - leader_ts > _FOLLOW_POSE_TIMEOUT_S:
+                    return MotionResult(False, "LEADER_LOST", "leader odom timed out")
+                if own_pose is None:
+                    return MotionResult(False, "POSE_STALE", "no local pose for follower loop")
+                if not self._distance_safe(own_pose):
+                    return MotionResult(False, "MIN_DISTANCE_BREACH",
+                                        "neighbor distance breached during follower PI control")
+                target = (leader_pose.position.x + offset[0],
+                          leader_pose.position.y + offset[1],
+                          leader_pose.position.z + offset[2])
+                if last_calc is None or now - last_calc >= loop_dt:
+                    error = (target[0] - own_pose.position.x,
+                             target[1] - own_pose.position.y,
+                             target[2] - own_pose.position.z)
+                    integral = [integral[i] + error[i] * loop_dt for i in range(3)]
+                    vel = [self._follower_p_gain * error[i] + self._follower_i_gain * integral[i]
+                           for i in range(3)]
+                    k_xy = math.hypot(vel[0], vel[1])
+                    if k_xy > self._follower_limit_xy:
+                        scale = self._follower_limit_xy / k_xy
+                        vel[0] *= scale
+                        vel[1] *= scale
+                    if abs(vel[2]) > self._follower_limit_z:
+                        vel[2] = math.copysign(self._follower_limit_z, vel[2])
+                    setpoint = PoseStamped()
+                    setpoint.header.stamp = self._ros.Time.now()
+                    setpoint.pose.position.x = own_pose.position.x + vel[0] * loop_dt
+                    setpoint.pose.position.y = own_pose.position.y + vel[1] * loop_dt
+                    setpoint.pose.position.z = own_pose.position.z + vel[2] * loop_dt
+                    setpoint.pose.orientation.x = 0.0
+                    setpoint.pose.orientation.y = 0.0
+                    setpoint.pose.orientation.z = math.sin(goal.yaw / 2.0)
+                    setpoint.pose.orientation.w = math.cos(goal.yaw / 2.0)
+                    last_setpoint = setpoint
+                    last_calc = now
+                if last_setpoint is not None:
+                    self._setpoint_pub.publish(last_setpoint)
+                target_pose = type("PoseLike", (), {"position": type(
+                    "PosLike", (), {"x": target[0], "y": target[1], "z": target[2]})()})()
+                leader_final = type("PoseLike", (), {"position": type(
+                    "PosLike", (), {"x": goal.x, "y": goal.y, "z": goal.z})()})()
+                if self._near(own_pose, target_pose) and self._near(leader_pose, leader_final):
+                    if arrived_since is None:
+                        arrived_since = now
+                    elif now - arrived_since >= self.steady_s:
+                        self._emit_completed()
+                        return MotionResult(True, "", "follower formation reached")
+                else:
+                    arrived_since = None
+                time.sleep(publish_dt)
+        finally:
+            self._direct_control_pub.publish(Bool(False))
         return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
 
-    @staticmethod
-    def _near(own, target):
+    def _near(self, own, target):
         dx = own.position.x - target.position.x
         dy = own.position.y - target.position.y
         dz = own.position.z - target.position.z
-        return math.hypot(math.hypot(dx, dy), dz) <= 0.5
+        return math.hypot(math.hypot(dx, dy), dz) <= self.pos_tolerance_m
 
     def start_move_to(self, goal, cancel_event, deadline):
+        if goal.command == "MOVE_TO":
+            takeoff = self._ensure_takeoff(cancel_event, deadline)
+            if not takeoff.success:
+                return takeoff
         if goal.command == "HOVER":
             return self._hover_loop(goal, cancel_event, deadline)
         if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
+            result = self._plan_vertical_transition(self._layer_follow_route,
+                                                    cancel_event, deadline)
+            if not result.success:
+                return result
             return self._follower_loop(goal, cancel_event, deadline)
-        if goal.command in ("MOVE_TO", "FAULT_EXIT", "FOLLOW_ROUTE"):
-            # Command height layers: vertical-first, then the horizontal plan.
+        if goal.command == "MOVE_TO":
+            result = self._plan_vertical_transition(self._layer_move_to,
+                                                    cancel_event, deadline)
+            if not result.success:
+                return result
+            horizontal = MotionGoal(goal.x, goal.y, self._layer_move_to, goal.yaw,
+                                    command="MOVE_TO", layer_z=self._layer_move_to)
+            result = self._plan_horizontal(horizontal, cancel_event, deadline)
+            if not result.success:
+                return result
+            return self._plan_vertical_transition(goal.z, cancel_event, deadline)
+        if goal.command in ("FAULT_EXIT", "FOLLOW_ROUTE"):
             layer_z = self._layer_for_goal(goal)
             result = self._plan_vertical_transition(layer_z, cancel_event, deadline)
             if not result.success:
@@ -415,6 +602,29 @@ class EgoSwarmDriver(MotionDriver):
             code = "" if ready else ("DRIVER_NOT_READY" if not self._node_ready else "SHUTTING_DOWN")
             message = "" if ready else "ego_planner_driver node not ready or shut down"
         return DriverHealth(ready, code, message)
+
+    def prepare(self, goal):
+        base = self.health()
+        if not base.ready:
+            return base
+        with self._lock:
+            pose_fresh = (self._last_pose_mono_s is not None and
+                          self._monotonic_clock() - self._last_pose_mono_s <= self.pose_timeout_s)
+            state = copy.deepcopy(self._last_mavros_state)
+            state_fresh = (self._last_mavros_state_mono_s is not None and
+                           self._monotonic_clock() - self._last_mavros_state_mono_s <= self.pose_timeout_s)
+            origin_confirmed = self._origin_confirmed
+        if not pose_fresh:
+            return DriverHealth(False, "POSE_STALE", "local pose is not fresh")
+        if self._mavros_state_topic:
+            if state is None or not state_fresh or not state.connected:
+                return DriverHealth(False, "MAVROS_NOT_READY", "MAVROS state is stale or disconnected")
+            if goal.command == "MOVE_TO" and not state.armed and not origin_confirmed:
+                return DriverHealth(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
+            if goal.command != "MOVE_TO" and not state.armed:
+                return DriverHealth(False, "VEHICLE_NOT_ARMED",
+                                    "%s requires an already armed vehicle" % goal.command)
+        return DriverHealth(True, "", "arm-before checks passed")
 
     def can_end_safety_lease(self, disarmed_stable_s):
         # Base gate: fresh local pose and no active trajectory.
@@ -454,6 +664,11 @@ class EgoSwarmDriver(MotionDriver):
 
     @classmethod
     def from_ros_params(cls):
+        exec_target = rospy.get_param("/exec_target", "")
+        neighbor_odom_topics = rospy.get_param(
+            "~ego_swarm/neighbor_odom_topics", "")
+        if not neighbor_odom_topics:
+            neighbor_odom_topics = _default_neighbor_odom_topics(exec_target)
         return cls(
             namespace=rospy.get_param("~ego_swarm/namespace", ""),
             state_timeout_s=rospy.get_param("~ego_swarm/state_timeout_s", 200.0),
@@ -471,4 +686,14 @@ class EgoSwarmDriver(MotionDriver):
             layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
             formation_offsets=rospy.get_param("~ego_swarm/formation_offsets", {}),
             leader_odom_topic_prefix=rospy.get_param("~ego_swarm/leader_odom_topic_prefix", ""),
+            arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),
+            mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
+            origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),
+            takeoff_height_m=rospy.get_param("~ego_swarm/takeoff_height_m", 5.0),
+            takeoff_stable_s=rospy.get_param("~ego_swarm/takeoff_stable_s", 2.0),
+            vertical_speed_mps=rospy.get_param("~ego_swarm/vertical_speed_mps", 1.0),
+            vertical_accel_mps2=rospy.get_param("~ego_swarm/vertical_accel_mps2", 0.5),
+            neighbor_odom_topics=neighbor_odom_topics,
+            min_horizontal_distance_m=rospy.get_param("~ego_swarm/min_horizontal_distance_m", 1.0),
+            min_vertical_distance_m=rospy.get_param("~ego_swarm/min_vertical_distance_m", 2.0),
         )

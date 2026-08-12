@@ -6,6 +6,8 @@ from ..models import DriverHealth, HoldGoal, MotionGoal, MotionResult
 
 
 class MotionDriver(ABC):
+    def prepare(self, goal: MotionGoal) -> DriverHealth:
+        return self.health()
     @abstractmethod
     def start_move_to(self, goal: MotionGoal, cancel_event, deadline) -> MotionResult: ...
     @abstractmethod

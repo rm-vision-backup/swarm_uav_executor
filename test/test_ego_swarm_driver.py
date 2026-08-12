@@ -4,8 +4,9 @@ import time
 import unittest
 
 from geometry_msgs.msg import PoseStamped
-from swarm_uav_executor.drivers.ego_swarm import EgoSwarmDriver
-from swarm_uav_executor.models import HoldGoal, MotionGoal
+from swarm_uav_executor.drivers.ego_swarm import (EgoSwarmDriver,
+                                                  _default_neighbor_odom_topics)
+from swarm_uav_executor.models import HoldGoal, MotionGoal, MotionResult
 from mavros_msgs.msg import State as MavrosState
 
 
@@ -102,6 +103,20 @@ class EgoSwarmDriverTest(unittest.TestCase):
         goal = MotionGoal(1, 0, 15, 0)
         result = self._dispatch(driver, goal, "COMPLETED")
         self.assertTrue(result is not None and result.success)
+
+    def test_horizontal_plan_publishes_frozen_heading(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(1, 0, 15, 1.25)
+        result = self._dispatch(driver, goal, "COMPLETED")
+        self.assertTrue(result.success)
+        self.assertEqual(len(driver._goal_yaw_pub.msgs), 1)
+        self.assertAlmostEqual(driver._goal_yaw_pub.msgs[0].data, 1.25)
+
+    def test_default_neighbor_topics_exclude_own_aircraft(self):
+        topics = _default_neighbor_odom_topics("UAV7").split(',')
+        self.assertEqual(len(topics), 14)
+        self.assertNotIn("/UAV7/mavros/local_position/odom", topics)
+        self.assertIn("/UAV15/mavros/local_position/odom", topics)
 
     def test_plan_failed_returns_error(self):
         driver, _ = self._driver()
@@ -301,51 +316,29 @@ class EgoSwarmDriverTest(unittest.TestCase):
 
     def test_vertical_first_then_horizontal_move_to(self):
         driver, _ = self._driver()
-        self._emit_pose(driver, 2.0, 3.0, 5.0)   # own z=5, far from 15 m layer
+        calls = []
+        driver._plan_vertical_transition = lambda z, cancel, deadline: (
+            calls.append(("vertical", z)) or MotionResult(True, "", "ok"))
+        driver._plan_horizontal = lambda goal, cancel, deadline: (
+            calls.append(("horizontal", goal.x, goal.y, goal.z)) or MotionResult(True, "", "ok"))
         goal = MotionGoal(10, 20, 15, 0, command="MOVE_TO")
-        result_holder = {}
-        def runner():
-            result_holder["result"] = driver.start_move_to(
-                goal, threading.Event(), time.monotonic() + 3.0)
-        thread = threading.Thread(target=runner, daemon=True)
-        thread.start()
-        push_later(driver, "COMPLETED", 0.05)
-        push_later(driver, "COMPLETED", 0.30)
-        thread.join(2.0)
-        msgs = driver._goal_pub.msgs
-        self.assertEqual(len(msgs), 2)
-        first, second = msgs[0], msgs[1]
-        # Phase 1: pure vertical to the 15 m layer at current xy.
-        self.assertAlmostEqual(first.point.x, 2.0)
-        self.assertAlmostEqual(first.point.y, 3.0)
-        self.assertAlmostEqual(first.point.z, 15.0)
-        # Phase 2: horizontal goal to the final target.
-        self.assertAlmostEqual(second.point.x, 10.0)
-        self.assertAlmostEqual(second.point.y, 20.0)
-        self.assertAlmostEqual(second.point.z, 15.0)
-        self.assertTrue(result_holder["result"].success)
+        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 3.0)
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [("vertical", 15.0),
+                                 ("horizontal", 10, 20, 15.0),
+                                 ("vertical", 15)])
 
     def test_vertical_first_then_horizontal_fault_exit(self):
         driver, _ = self._driver()
-        self._emit_pose(driver, 1.0, 1.0, 15.0)   # own z=15, far from 8 m layer
+        calls = []
+        driver._plan_vertical_transition = lambda z, cancel, deadline: (
+            calls.append(("vertical", z)) or MotionResult(True, "", "ok"))
+        driver._plan_horizontal = lambda goal, cancel, deadline: (
+            calls.append(("horizontal", goal.x, goal.y, goal.z)) or MotionResult(True, "", "ok"))
         goal = MotionGoal(4, 5, 8, 0, command="FAULT_EXIT", layer_z=8.0)
-        result_holder = {}
-        def runner():
-            result_holder["result"] = driver.start_move_to(
-                goal, threading.Event(), time.monotonic() + 3.0)
-        thread = threading.Thread(target=runner, daemon=True)
-        thread.start()
-        push_later(driver, "COMPLETED", 0.05)
-        push_later(driver, "COMPLETED", 0.30)
-        thread.join(2.0)
-        msgs = driver._goal_pub.msgs
-        self.assertEqual(len(msgs), 2)
-        first, second = msgs[0], msgs[1]
-        self.assertAlmostEqual(first.point.z, 8.0)
-        self.assertAlmostEqual(second.point.x, 4.0)
-        self.assertAlmostEqual(second.point.y, 5.0)
-        self.assertAlmostEqual(second.point.z, 8.0)
-        self.assertTrue(result_holder["result"].success)
+        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 3.0)
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [("vertical", 8.0), ("horizontal", 4, 5, 8)])
 
     def test_skip_vertical_when_already_at_layer(self):
         driver, _ = self._driver()

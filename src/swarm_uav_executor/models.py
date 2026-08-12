@@ -27,6 +27,8 @@ class ExecutorConfig:
     task_service: str
     hold_service: str
     state_topic: str
+    task_control_service: str = ""
+    require_explicit_start: bool = False
     supported_commands: Tuple[str, ...] = ("MOVE_TO",)
     store_ttl_s: float = 3600.0
     store_max_records: int = 1024
@@ -134,6 +136,8 @@ class TaskRecord:
     error_code: str = ""
     message: str = ""
     updated_at: float = 0.0
+    started: bool = False
+    prepared_at: float = 0.0
 
     @property
     def terminal(self) -> bool:

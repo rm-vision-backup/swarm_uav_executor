@@ -1,14 +1,16 @@
 # swarm_uav_executor
 
-ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id, exec_target)`，只暴露本机 `UavTask`、`UavHold` 和 `UavTaskState` 接口。首版支持 `MOVE_TO`，`HOLD` 为高优先级安全入口。
+ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id, exec_target)`，暴露本机 `UavTask`、`UavTaskControl`、`UavHold` 和 `UavTaskState` 接口。`HOLD` 为高优先级安全入口。
 
 ## 安全边界
 
 - 实例只接受同时匹配 `uav_id` 与 `exec_target` 的请求，不能代其他 UAV 执行动作。
 - 同一时刻最多一个正常任务；同键同内容幂等，同键不同内容拒绝，HOLD 可抢占。
-- Service 仅完成校验、登记与接管；动作终态由状态 Topic 发布。
+- `UavTask` 执行 PREPARE，`UavTaskControl START` 才允许动作线程推进；整批未通过时可在 START 前 ABORT。
 - `mavros_position` 只连接配置的本机 MAVROS namespace，持续发布本地位置 setpoint。
-- 执行器**永不自动 arm，也不自动切换 OFFBOARD**。PX4 mode/arm、failsafe 与急停由独立现场安全流程负责。
+- 正式 `ego_swarm` driver 是本机 arm/OFFBOARD 的唯一软件所有者：仅未 arm 的 `MOVE_TO` 在 START 后按需 arm，完成 5 m 垂直检查点并稳定 2 s；已 arm 飞机跳过该过程。`mavros_position` 兼容 driver 仍不自动 arm。
+- `MOVE_TO`、`FOLLOW_ROUTE`、`FAULT_EXIT` 分别使用 15/12/8 m 动作层；严格垂直段冻结 x/y/yaw，其他非 follower 航段使用 EGO，followers 使用 PI+编队偏置。
+- 垂直段与 follower PI 对邻机实施 1.0 m 水平、2.0 m 垂直中心距运行时门禁，突破门槛返回失败并触发整批 HOLD。
 - 坐标系、yaw 约定、阈值、A01-A15 映射及 MAVROS namespace 未经现场冻结前，只允许 mock、SITL 或不上桨验证。
 
 ## 构建与测试
@@ -42,7 +44,7 @@ roslaunch swarm_uav_executor uav_executor_mock.launch \
 
 ## Direct MAVROS 启动
 
-先由外部安全流程启动并检查本机 MAVROS；示例不会 arm 或切换模式：
+先由外部安全流程启动并检查本机 MAVROS；此兼容 driver 不会 arm 或切换模式：
 
 ```bash
 roslaunch swarm_uav_executor uav_executor_mavros.launch \
@@ -59,7 +61,7 @@ roslaunch swarm_uav_executor uav_executor_mavros.launch \
 - `settle_duration_s`
 - `require_connected` / `require_armed` / `require_offboard`
 
-建议实机门禁将 `require_armed`、`require_offboard` 设为 `true`，但 arm/mode 仍必须由外部操作者或安全控制器完成。
+建议兼容 direct driver 的实机门禁将 `require_armed`、`require_offboard` 设为 `true`。
 
 ## SITL / 不上桨验收门禁
 
@@ -72,8 +74,8 @@ rostopic hz /uav1/mavros/setpoint_position/local
 ```
 
 - `/state.connected`、pose 新鲜度和配置 frame 必须满足现场约定；
-- 先在未 arm 状态确认节点不会调用 arm/mode Service；
-- 再由外部安全流程完成 mode/arm，并验证 setpoint 频率、稳定窗口、timeout、pose stale、MAVROS 断连和 HOLD；
+- 对正式 `ego_swarm` driver，先确认冻结原点回读和 PREPARE 全部通过，再由 GCS_A 整批 START 触发按需起飞；
+- 验证 setpoint 频率、5 m 检查点、分层轨迹、整批 timeout、pose stale、MAVROS 断连和 HOLD；
 - 保存 rosbag/ROS 日志与 PX4 failsafe 配置。没有 PX4 SITL 或现场签字时，只能声明 driver 自动化测试通过，不能声明飞行验收通过。
 
 ## 后续扩展

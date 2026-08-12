@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time, unittest
 from swarm_uav_interfaces.msg import TaskAssignment
-from swarm_uav_interfaces.srv import UavTaskRequest, UavHoldRequest
+from swarm_uav_interfaces.srv import UavTaskControlRequest, UavTaskRequest, UavHoldRequest
 from swarm_uav_executor.drivers.mock import MockMotionDriver
 from swarm_uav_executor.executor import UavTaskExecutor
 from swarm_uav_executor.models import ExecutorConfig, ExecutorIdentity
@@ -23,6 +23,30 @@ class LeaseGuard:
     def __init__(self, permitted=False): self.permitted=permitted
     def permits_task(self, _mission_id): return self.permitted
 class ExecutorTest(unittest.TestCase):
+    def test_explicit_start_prepares_without_motion_then_starts(self):
+        executor,store,_,driver=make(.01)
+        executor.config = ExecutorConfig("/task", "/hold", "/state", "/control", True,
+                                         terminal_republish_count=0)
+        req=request(); self.assertTrue(executor.handle_task(req).accepted)
+        self.assertEqual(driver.start_count, 0)
+        control=UavTaskControlRequest(protocol_version="1.0", operation="START",
+            mission_id="m", command_id="c1", uav_id="A01", exec_target="UAV1")
+        self.assertTrue(executor.handle_task_control(control).accepted)
+        time.sleep(.05); self.assertEqual(driver.start_count, 1)
+        self.assertEqual(next(iter(store._records.values())).status, "COMPLETED")
+
+    def test_abort_prepared_task_never_starts_motion(self):
+        executor,store,_,driver=make(.01)
+        executor.config = ExecutorConfig("/task", "/hold", "/state", "/control", True,
+                                         terminal_republish_count=0)
+        self.assertTrue(executor.handle_task(request()).accepted)
+        control=UavTaskControlRequest(protocol_version="1.0", operation="ABORT",
+            mission_id="m", command_id="c1", uav_id="A01", exec_target="UAV1", reason="group failed")
+        self.assertTrue(executor.handle_task_control(control).accepted)
+        self.assertEqual(driver.start_count, 0)
+        record=next(iter(store._records.values()))
+        self.assertEqual(record.status, "FAILED"); self.assertEqual(record.error_code, "TASK_ABORTED")
+
     def test_nonblocking_and_duplicate(self):
         executor,store,_,driver=make(.15); req=request(); start=time.time(); first=executor.handle_task(req)
         self.assertLess(time.time()-start,.1); second=executor.handle_task(req); self.assertTrue(second.accepted)

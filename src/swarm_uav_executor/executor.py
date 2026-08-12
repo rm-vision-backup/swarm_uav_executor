@@ -2,9 +2,9 @@
 from __future__ import annotations
 import threading
 import time
-from swarm_uav_interfaces.srv import UavHoldResponse, UavTaskResponse
+from swarm_uav_interfaces.srv import UavHoldResponse, UavTaskControlResponse, UavTaskResponse
 from .models import (CONFLICT, DUPLICATE, HoldGoal, SafetyHoldResult, STATE_ACCEPTED,
-                     STATE_COMPLETED, STATE_FAILED, TaskRecord)
+                     STATE_COMPLETED, STATE_FAILED, TaskKey, TaskRecord)
 from .validation import (RequestValidationError, build_goal, request_fingerprint, task_key_from_request,
                          validate_hold_request, validate_task_request)
 
@@ -41,12 +41,63 @@ class UavTaskExecutor:
             if not health.ready:
                 return UavTaskResponse(False, STATE_FAILED, health.error_code or "DRIVER_NOT_READY", health.message)
             goal = build_goal(request)
+            prepared = self.driver.prepare(goal)
+            if not prepared.ready:
+                return UavTaskResponse(False, STATE_FAILED,
+                                       prepared.error_code or "PREPARE_FAILED",
+                                       prepared.message or "arm-before checks failed")
             record = TaskRecord(key, fingerprint, request.exec_target, request.command, float(request.timeout_s), goal,
-                                updated_at=self.clock(), message="task accepted")
-            self.store.register(record); self.reporter.publish(record); self._cancel = threading.Event()
-            thread = threading.Thread(target=self._run_task, args=(key, goal, self._cancel), daemon=True)
-            self._threads.append(thread); thread.start()
-        return UavTaskResponse(True, STATE_ACCEPTED, "", "task accepted")
+                                updated_at=self.clock(), message="task prepared", prepared_at=self.clock())
+            self.store.register(record); self.reporter.publish(record)
+            if not self.config.require_explicit_start:
+                self._start_record_locked(key)
+        return UavTaskResponse(True, STATE_ACCEPTED, "",
+                               "task prepared" if self.config.require_explicit_start else "task accepted")
+
+    def _start_record_locked(self, key):
+        record = self.store.mark_started(key, self.clock())
+        self.reporter.publish(record)
+        self._cancel = threading.Event()
+        thread = threading.Thread(target=self._run_task, args=(key, record.goal, self._cancel), daemon=True)
+        self._threads.append(thread); thread.start()
+        return record
+
+    def handle_task_control(self, request):
+        operation = str(request.operation or "").upper()
+        if request.protocol_version != "1.0":
+            return UavTaskControlResponse(False, STATE_FAILED, "UNSUPPORTED_PROTOCOL", "protocol_version must be 1.0")
+        if request.uav_id != self.identity.uav_id or request.exec_target != self.identity.exec_target:
+            return UavTaskControlResponse(False, STATE_FAILED, "IDENTITY_MISMATCH", "request is not addressed to this UAV executor")
+        key = TaskKey(request.mission_id, request.command_id, request.uav_id)
+        if self.store.get(key) is None:
+            return UavTaskControlResponse(False, STATE_FAILED, "TASK_NOT_PREPARED", "matching prepared task was not found")
+        with self._lock:
+            record = self.store.get(key)
+            if operation == "ABORT":
+                if record.terminal:
+                    return UavTaskControlResponse(True, record.status, record.error_code, record.message)
+                if record.started:
+                    return UavTaskControlResponse(False, record.status, "TASK_ALREADY_STARTED",
+                                                  "started task requires HOLD, not ABORT")
+                if self._cancel is not None:
+                    self._cancel.set()
+                self.reporter.publish_transition(key, STATE_FAILED, "ABORTED", "TASK_ABORTED",
+                                                 request.reason or "task aborted before group start")
+                return UavTaskControlResponse(True, STATE_FAILED, "TASK_ABORTED", "task aborted")
+            if operation != "START":
+                return UavTaskControlResponse(False, record.status, "BAD_OPERATION", "operation must be START or ABORT")
+            if record.started:
+                return UavTaskControlResponse(True, record.status, record.error_code,
+                                              "task already started")
+            if record.terminal:
+                return UavTaskControlResponse(False, record.status, record.error_code or "TASK_TERMINAL",
+                                              record.message or "task is already terminal")
+            if self._hold_in_progress or self._cancel is not None:
+                return UavTaskControlResponse(False, record.status, "BUSY", "another task or HOLD is active")
+            # The record keeps the PREPARE timestamp, so the onboard deadline
+            # includes time spent waiting at the group START barrier.
+            self._start_record_locked(key)
+        return UavTaskControlResponse(True, STATE_ACCEPTED, "", "task started")
 
     def handle_hold(self, request):
         try: validate_hold_request(request, self.identity)
@@ -60,7 +111,7 @@ class UavTaskExecutor:
         return UavHoldResponse(True, "", "HOLD accepted")
 
     def _run_task(self, key, goal, cancel_event):
-        record = self.store.get(key); deadline = self.clock() + record.timeout_s
+        record = self.store.get(key); deadline = record.prepared_at + record.timeout_s
         try: result = self.driver.start_move_to(goal, cancel_event, deadline)
         except Exception as error: result = type("Result", (), {"success": False, "error_code": "DRIVER_EXCEPTION", "message": str(error)})()
         if not result.success:

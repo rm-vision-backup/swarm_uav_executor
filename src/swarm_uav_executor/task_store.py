@@ -41,6 +41,13 @@ class TaskStore:
             self._records[key] = updated
             return updated
 
+    def mark_started(self, key: TaskKey, now: float) -> TaskRecord:
+        with self._lock:
+            current = self._records[key]
+            updated = replace(current, started=True, updated_at=now, message="task started")
+            self._records[key] = updated
+            return updated
+
     def active(self) -> Optional[TaskRecord]:
         with self._lock:
             return next((record for record in self._records.values() if not record.terminal), None)
