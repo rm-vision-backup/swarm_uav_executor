@@ -299,94 +299,6 @@ class EgoSwarmDriver(MotionDriver):
             time.sleep(1.0 / _MONITOR_HZ)
         return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
 
-    def _ensure_offboard(self, deadline):
-        if not self._mavros_state_topic:
-            return MotionResult(True, "", "OFFBOARD preparation disabled without MAVROS state")
-        with self._lock:
-            state = copy.deepcopy(self._last_mavros_state)
-            origin_confirmed = self._origin_confirmed
-            pose = copy.deepcopy(self._last_pose)
-        if state is not None and state.armed:
-            if state.mode == "OFFBOARD":
-                return MotionResult(True, "", "vehicle already armed in OFFBOARD")
-            from mavros_msgs.srv import SetMode
-            mode = self._ros.ServiceProxy(self._mode_service, SetMode)
-            response = mode(0, "OFFBOARD")
-            if not response.mode_sent:
-                return MotionResult(False, "OFFBOARD_REJECTED", "PX4 rejected OFFBOARD mode")
-            wait_end = min(float(deadline), self._monotonic_clock() + 5.0)
-            while self._monotonic_clock() < wait_end:
-                with self._lock:
-                    current = copy.deepcopy(self._last_mavros_state)
-                if current is not None and current.armed and current.mode == "OFFBOARD":
-                    return MotionResult(True, "", "armed vehicle restored to OFFBOARD")
-                time.sleep(0.05)
-            return MotionResult(False, "OFFBOARD_TIMEOUT", "OFFBOARD state was not observed")
-        if state is None or not state.connected:
-            return MotionResult(False, "MAVROS_NOT_READY", "MAVROS state is unavailable or disconnected")
-        if not origin_confirmed:
-            return MotionResult(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
-        if pose is None:
-            return MotionResult(False, "POSE_STALE", "no local pose for takeoff")
-        if self._configure_px4_params:
-            configured = self._configure_px4_failsafe_params()
-            if not configured.success:
-                return configured
-        from mavros_msgs.srv import CommandBool, SetMode
-        arm = self._ros.ServiceProxy(self._arm_service, CommandBool)
-        mode = self._ros.ServiceProxy(self._mode_service, SetMode)
-        # Setpoint stream exists in IDLE. Request OFFBOARD before arming, as
-        # required by the existing SITL deployment and accepted by real PX4.
-        mode_response = mode(0, "OFFBOARD")
-        if not mode_response.mode_sent:
-            return MotionResult(False, "OFFBOARD_REJECTED", "PX4 rejected OFFBOARD mode")
-        arm_response = arm(True)
-        if not arm_response.success:
-            return MotionResult(False, "ARM_REJECTED", "PX4 rejected arm request")
-        wait_end = min(float(deadline), self._monotonic_clock() + 5.0)
-        while self._monotonic_clock() < wait_end:
-            with self._lock:
-                current = copy.deepcopy(self._last_mavros_state)
-            if current is not None and current.armed and current.mode == "OFFBOARD":
-                break
-            time.sleep(0.05)
-        else:
-            return MotionResult(False, "ARM_OFFBOARD_TIMEOUT", "armed/OFFBOARD state was not observed")
-        return MotionResult(True, "", "armed vehicle is ready for Ego trajectory")
-
-    def _configure_px4_failsafe_params(self):
-        """Configure the explicit no-RC SITL policy before OFFBOARD/arming.
-
-        This belongs to the onboard flight driver, not the GCS command client.
-        The values are intentionally launch-configured because the no-RC
-        exception is suitable for SITL only and must not silently affect a real
-        vehicle.  ParamSet replies are checked immediately; continuing after a
-        rejected or unavailable parameter would make the takeoff result
-        ambiguous and can leave PX4 in RTL before the START response arrives.
-        """
-        from mavros_msgs.msg import ParamValue
-        from mavros_msgs.srv import ParamSet
-
-        try:
-            self._ros.wait_for_service(
-                "/mavros/param/set", timeout=self._px4_param_set_timeout_s)
-            param_set = self._ros.ServiceProxy("/mavros/param/set", ParamSet)
-            for name, integer in self._px4_params.items():
-                value = ParamValue(integer=int(integer))
-                response = param_set(name, value)
-                if not response.success:
-                    return MotionResult(False, "PX4_PARAM_REJECTED",
-                                        "PX4 rejected %s=%s" % (name, integer))
-                returned = getattr(response.value, "integer", None)
-                if returned is not None and int(returned) != int(integer):
-                    return MotionResult(False, "PX4_PARAM_VERIFY_FAILED",
-                                        "PX4 returned %s=%s for %s" %
-                                        (name, returned, integer))
-        except Exception as error:
-            return MotionResult(False, "PX4_PARAM_UNAVAILABLE",
-                                "cannot configure PX4 takeoff parameters: %s" % error)
-        return MotionResult(True, "", "PX4 takeoff parameters configured")
-
     def _plan_horizontal(self, goal, cancel, deadline):
         with self._lock:
             self._last_cmd_reply = None
@@ -488,10 +400,6 @@ class EgoSwarmDriver(MotionDriver):
         return math.hypot(math.hypot(dx, dy), dz) <= self.pos_tolerance_m
 
     def start_move_to(self, goal, cancel_event, deadline):
-        if goal.command == "MOVE_TO":
-            prepared = self._ensure_offboard(deadline)
-            if not prepared.success:
-                return prepared
         if goal.command == "HOVER":
             return self._plan_horizontal(goal, cancel_event, deadline)
         if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
@@ -533,11 +441,14 @@ class EgoSwarmDriver(MotionDriver):
         if self._mavros_state_topic:
             if state is None or not state_fresh or not state.connected:
                 return DriverHealth(False, "MAVROS_NOT_READY", "MAVROS state is stale or disconnected")
-            if goal.command == "MOVE_TO" and not state.armed and not origin_confirmed:
-                return DriverHealth(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
-            if goal.command != "MOVE_TO" and not state.armed:
+            if not state.armed:
                 return DriverHealth(False, "VEHICLE_NOT_ARMED",
                                     "%s requires an already armed vehicle" % goal.command)
+            if state.mode != "OFFBOARD":
+                return DriverHealth(False, "VEHICLE_NOT_OFFBOARD",
+                                    "%s requires an already OFFBOARD vehicle" % goal.command)
+            if goal.command == "MOVE_TO" and not origin_confirmed:
+                return DriverHealth(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
         return DriverHealth(True, "", "arm-before checks passed")
 
     def can_end_safety_lease(self, disarmed_stable_s):
