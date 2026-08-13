@@ -29,7 +29,10 @@ class GpOriginReceiver:
         self.confirmed = False
         self.last_send = rospy.Time(0)
         self.attempts = 0
-        self.max_attempts = int(rospy.get_param("~max_attempts", 10))
+        # A non-positive value means retry indefinitely.  Continuous GCS
+        # broadcasts also let a receiver recover after a late start or bridge
+        # reconnect instead of depending on one finite retry window.
+        self.max_attempts = int(rospy.get_param("~max_attempts", 0))
         self.retry_s = float(rospy.get_param("~retry_s", 1.0))
         self.horizontal_tolerance_m = float(rospy.get_param("~horizontal_tolerance_m", 0.1))
         self.altitude_tolerance_m = float(rospy.get_param("~altitude_tolerance_m", 0.1))
@@ -53,7 +56,10 @@ class GpOriginReceiver:
 
     def on_origin(self, msg):
         with self._lock:
-            if self.confirmed and self._same_origin(self.origin, msg):
+            # The GCS broadcasts the frozen value periodically.  Do not reset
+            # an in-progress or completed synchronization for an identical
+            # value; the timer owns retries for an unconfirmed origin.
+            if self._same_origin(self.origin, msg):
                 return
             if self.state_received and self.armed:
                 rospy.logerr("refusing to change global origin while armed")
@@ -78,7 +84,8 @@ class GpOriginReceiver:
     def _send(self):
         with self._lock:
             if (self.origin is None or self.confirmed or not self.state_received or
-                    not self.connected or self.armed or self.attempts >= self.max_attempts):
+                    not self.connected or self.armed
+                    or (self.max_attempts > 0 and self.attempts >= self.max_attempts)):
                 return
             self.last_send = rospy.Time.now()
             self.attempts += 1
@@ -110,7 +117,7 @@ class GpOriginReceiver:
                     not self.connected or self.armed):
                 return
             elapsed = (rospy.Time.now() - self.last_send).to_sec() if self.last_send != rospy.Time(0) else self.retry_s
-            exhausted = self.attempts >= self.max_attempts
+            exhausted = self.max_attempts > 0 and self.attempts >= self.max_attempts
         if exhausted:
             rospy.logerr_throttle(5.0, "gp_origin confirmation exhausted %d attempts", self.max_attempts)
         elif elapsed >= self.retry_s:
