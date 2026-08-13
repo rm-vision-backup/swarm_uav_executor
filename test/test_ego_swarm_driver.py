@@ -217,31 +217,18 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("stably disarmed", msg)
 
-    # ---- HOVER: freeze the current pose and republish it ----
+    # ---- HOVER: route the current command through Ego ----
 
-    def test_hover_freezes_pose(self):
+    def test_hover_uses_ego_goal(self):
         driver, _ = self._driver()
         self._emit_pose(driver, 1.0, 2.0, 10.0)
         goal = MotionGoal(999, 999, 10, 0, command="HOVER", layer_z=10.0)
-        event = threading.Event()
-        result_holder = {}
-        def runner():
-            result_holder["result"] = driver.start_move_to(goal, event, time.monotonic() + 3.0)
-        thread = threading.Thread(target=runner, daemon=True)
-        thread.start()
-        time.sleep(0.15)
-        # The vehicle moves; HOVER must keep publishing the frozen pose.
-        self._emit_pose(driver, 50.0, 50.0, 10.0)
-        time.sleep(0.15)
-        event.set()
-        thread.join(1.5)
-        msgs = driver._setpoint_pub.msgs
-        self.assertGreaterEqual(len(msgs), 2)
-        for m in msgs:
-            self.assertAlmostEqual(m.pose.position.x, 1.0)
-            self.assertAlmostEqual(m.pose.position.y, 2.0)
-            self.assertAlmostEqual(m.pose.position.z, 10.0)
-        self.assertEqual(result_holder["result"].error_code, "COMMAND_HELD")
+        driver._plan_horizontal = lambda actual_goal, cancel, deadline: (
+            self.assertEqual((actual_goal.x, actual_goal.y, actual_goal.z), (999, 999, 10)) or
+            MotionResult(True, "", "ok"))
+        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 1.0)
+        self.assertTrue(result.success)
+        self.assertEqual(len(driver._goal_pub.msgs), 1)
 
     # ---- FOLLOW_ROUTE follower: PI tracking of leader + offset ----
 
@@ -312,41 +299,14 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(driver._last_cmd_reply, "COMPLETED")
 
-    # ---- vertical-first layering ----
-
-    def test_vertical_first_then_horizontal_move_to(self):
+    def test_intermediate_waypoints_are_duplicated_for_ego(self):
         driver, _ = self._driver()
-        calls = []
-        driver._plan_vertical_transition = lambda z, cancel, deadline: (
-            calls.append(("vertical", z)) or MotionResult(True, "", "ok"))
-        driver._plan_horizontal = lambda goal, cancel, deadline: (
-            calls.append(("horizontal", goal.x, goal.y, goal.z)) or MotionResult(True, "", "ok"))
-        goal = MotionGoal(10, 20, 15, 0, command="MOVE_TO")
-        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 3.0)
-        self.assertTrue(result.success)
-        self.assertEqual(calls, [("vertical", 15.0),
-                                 ("horizontal", 10, 20, 15.0),
-                                 ("vertical", 15)])
-
-    def test_vertical_first_then_horizontal_fault_exit(self):
-        driver, _ = self._driver()
-        calls = []
-        driver._plan_vertical_transition = lambda z, cancel, deadline: (
-            calls.append(("vertical", z)) or MotionResult(True, "", "ok"))
-        driver._plan_horizontal = lambda goal, cancel, deadline: (
-            calls.append(("horizontal", goal.x, goal.y, goal.z)) or MotionResult(True, "", "ok"))
-        goal = MotionGoal(4, 5, 8, 0, command="FAULT_EXIT", layer_z=8.0)
-        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 3.0)
-        self.assertTrue(result.success)
-        self.assertEqual(calls, [("vertical", 8.0), ("horizontal", 4, 5, 8)])
-
-    def test_skip_vertical_when_already_at_layer(self):
-        driver, _ = self._driver()
-        self._emit_pose(driver, 0.0, 0.0, 15.0)   # already at 15 m layer
-        goal = MotionGoal(1, 0, 15, 0)
-        result = self._dispatch(driver, goal, "COMPLETED")
-        self.assertTrue(result.success)
-        self.assertEqual(len(driver._goal_pub.msgs), 1)
+        goal = MotionGoal(3, 0, 12, 0, command="FOLLOW_ROUTE",
+                          waypoints=((1, 0, 5, 0), (2, 0, 10, 0), (3, 0, 12, 0)))
+        driver._publish_waypoints(goal)
+        points = driver._waypoints_pub.msgs[0].polygon.points
+        self.assertEqual([(p.x, p.y, p.z) for p in points],
+                         [(1, 0, 5), (1, 0, 5), (2, 0, 10), (2, 0, 10), (3, 0, 12)])
 
 
 if __name__ == "__main__":

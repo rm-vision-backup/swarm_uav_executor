@@ -11,6 +11,7 @@
   <!-- leader odom 话题前缀: 如空则自动按 /<leader>/mavros/local_position/odom 构造 -->
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
+  <arg name="configure_px4_params" default="false" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the
        Python EgoSwarmDriver and topology bridge can discover them. -->
@@ -30,7 +31,6 @@
     <param name="terminal_to_idle_s" value="2.0" />
     <param name="idle_hover_refresh_hz" value="1.0" />
     <param name="swarm_clearance" value="0.5" />
-    <param name="legacy_auto_takeoff" value="false" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
@@ -64,6 +64,11 @@
     <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
     <param name="ego_swarm/leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <param name="ego_swarm/neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
+    <!-- No-RC SITL policy is explicit and must not be enabled by real-vehicle defaults. -->
+    <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" />
+    <param name="ego_swarm/px4_param_set_timeout_s" value="5.0" />
+    <param name="ego_swarm/com_rcl_except" value="4" />
+    <param name="ego_swarm/nav_rcl_act" value="0" />
     <param name="safety_lease/required_for_tasks" value="true" />
   </node>
 </launch>

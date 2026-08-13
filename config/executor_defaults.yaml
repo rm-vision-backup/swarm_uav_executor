@@ -22,10 +22,6 @@ ego_swarm:
   # 空 namespace = 本机无前缀话题（与 MAVROS /mavros/* 一致，机间靠 bridge 源前缀）
   namespace: ""
   state_timeout_s: 200.0
-  takeoff_height_m: 5.0
-  takeoff_stable_s: 2.0
-  vertical_speed_mps: 1.0
-  vertical_accel_mps2: 0.5
   min_horizontal_distance_m: 1.0
   min_vertical_distance_m: 2.0
   position_tolerance_m: 0.2
@@ -38,10 +34,6 @@ ego_swarm:
   follower_i_gain: 0.1
   follower_limit_xy: 2.0
   follower_limit_z: 1.0
-  # 高度分层：MOVE_TO@15m / FOLLOW_ROUTE@12m / FAULT_EXIT@8m
-  layer_move_to: 15.0
-  layer_follow_route: 12.0
-  layer_fault_exit: 8.0
 mavros_position:
   namespace: /mavros
   frame_id: map

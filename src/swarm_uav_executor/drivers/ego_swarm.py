@@ -4,15 +4,11 @@ The C++ node publishes a latched exec_state topic that this driver uses as
 the single source of truth for the motion lifecycle:
   IDLE -> EXECUTING -> COMPLETED / EGO_PLAN_FAILED / EGO_EXEC_TIMEOUT / HOLD
 
-The driver owns arm/OFFBOARD for an on-demand MOVE_TO takeoff.  The C++ node
-only publishes EGO position setpoints (PX4 OFFBOARD compatible).
+  The driver owns arm/OFFBOARD preparation for motion commands.  The C++ node
+  generates all trajectory setpoints (PX4 OFFBOARD compatible), except for the
+  FOLLOW_ROUTE follower's PI position loop.
 
-Command semantics (four full action commands):
-- MOVE_TO / FAULT_EXIT / FOLLOW_ROUTE(leader): ego real-time planning. A pure
-  vertical transition to the command's height layer runs first when the local
-  altitude differs from the target layer, then the horizontal goal/waypoints.
-- HOVER: freeze the current local pose at command receipt and republish that
-  frozen pose on the setpoint topic; no ego planning, no horizontal motion.
+- MOVE_TO / FAULT_EXIT / FOLLOW_ROUTE(leader) / HOVER: ego real-time planning.
 - FOLLOW_ROUTE(follower): track leader odom + formation offset with a
   position-loop PI controller publishing setpoints; no ego planning.
 """
@@ -41,10 +37,7 @@ _TERMINAL_OK = frozenset((_STATE_COMPLETED,))
 _TERMINAL_BAD = frozenset((_STATE_POSE_STALE, _STATE_PLAN_FAILED, _STATE_TIMEOUT))
 _MONITOR_HZ = 20.0
 
-_LAYER_MOVE_TO = 15.0
-_LAYER_FOLLOW_ROUTE = 12.0
-_LAYER_FAULT_EXIT = 8.0
-_HOVER_SETPOINT_HZ = 30.0
+_SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
 _FOLLOW_LOOP_HZ = 10.0         # follower PI control update rate
 
@@ -71,14 +64,13 @@ class EgoSwarmDriver(MotionDriver):
                  intent_type=None, mavros_state_topic="",
                  follower_p_gain=1.0, follower_i_gain=0.1,
                  follower_limit_xy=2.0, follower_limit_z=1.0,
-                 layer_move_to=15.0, layer_follow_route=12.0, layer_fault_exit=8.0,
                  formation_offsets=None, leader_odom_topic_prefix="",
                  arm_service="/mavros/cmd/arming", mode_service="/mavros/set_mode",
                  origin_confirmed_topic="/gp_origin_confirmed",
-                 takeoff_height_m=5.0, takeoff_stable_s=2.0,
-                 vertical_speed_mps=1.0, vertical_accel_mps2=0.5,
                  neighbor_odom_topics='', min_horizontal_distance_m=1.0,
-                 min_vertical_distance_m=2.0):
+                  min_vertical_distance_m=2.0, configure_px4_params=False,
+                  px4_param_set_timeout_s=5.0,
+                  px4_params=None):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -104,6 +96,12 @@ class EgoSwarmDriver(MotionDriver):
         self._last_mavros_state_mono_s = None
         self._origin_confirmed = False
         self._disarmed_since_mono_s = None
+        self._configure_px4_params = bool(configure_px4_params)
+        self._px4_param_set_timeout_s = float(px4_param_set_timeout_s)
+        self._px4_params = dict(px4_params or {
+            "COM_RCL_EXCEPT": 4,
+            "NAV_RCL_ACT": 0,
+        })
         if self._mavros_state_topic:
             from mavros_msgs.msg import State
             self._mavros_state_sub = ros.Subscriber(
@@ -157,9 +155,6 @@ class EgoSwarmDriver(MotionDriver):
         self._follower_i_gain = float(follower_i_gain)
         self._follower_limit_xy = float(follower_limit_xy)
         self._follower_limit_z = float(follower_limit_z)
-        self._layer_move_to = float(layer_move_to)
-        self._layer_follow_route = float(layer_follow_route)
-        self._layer_fault_exit = float(layer_fault_exit)
         self._formation_offsets = dict(formation_offsets or {})
         self._leader_odom_topic_prefix = str(leader_odom_topic_prefix or "").strip("/")
         self._leader_odom_sub = None
@@ -176,10 +171,6 @@ class EgoSwarmDriver(MotionDriver):
         self._min_vertical_distance_m = float(min_vertical_distance_m)
         self._arm_service = arm_service
         self._mode_service = mode_service
-        self._takeoff_height_m = float(takeoff_height_m)
-        self._takeoff_stable_s = float(takeoff_stable_s)
-        self._vertical_speed_mps = float(vertical_speed_mps)
-        self._vertical_accel_mps2 = float(vertical_accel_mps2)
 
     def _on_state(self, msg):
         with self._lock:
@@ -258,7 +249,15 @@ class EgoSwarmDriver(MotionDriver):
     def _publish_waypoints(self, goal):
         msg = PolygonStamped()
         msg.header.stamp = self._ros.Time.now()
-        for wp in goal.waypoints:
+        # Keep each intermediate waypoint for two B-spline control samples.
+        # The terminal waypoint remains single so Ego still converges to the
+        # requested endpoint instead of dwelling there as an intermediate knot.
+        waypoints = []
+        for index, wp in enumerate(goal.waypoints):
+            waypoints.append(wp)
+            if index < len(goal.waypoints) - 1:
+                waypoints.append(wp)
+        for wp in waypoints:
             p = msg.polygon.points.add()
             p.x, p.y, p.z = wp[0], wp[1], wp[2]
         self._waypoints_pub.publish(msg)
@@ -300,71 +299,9 @@ class EgoSwarmDriver(MotionDriver):
             time.sleep(1.0 / _MONITOR_HZ)
         return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
 
-    def _layer_for_goal(self, goal):
-        if goal.command == "FAULT_EXIT":
-            return self._layer_fault_exit
-        if goal.command == "FOLLOW_ROUTE":
-            return self._layer_follow_route
-        return self._layer_move_to
-
-    def _plan_vertical_transition(self, layer_z, cancel, deadline):
-        """Direct constrained vertical transition with frozen x/y/yaw."""
-        with self._lock:
-            pose = self._last_pose
-        if pose is None:
-            return MotionResult(False, "POSE_STALE", "no local pose for vertical transition")
-        cur_z = pose.position.z
-        if abs(cur_z - layer_z) <= self.pos_tolerance_m:
-            return MotionResult(True, "", "already at target layer")
-        captured = copy.deepcopy(pose)
-        direction = 1.0 if layer_z > cur_z else -1.0
-        speed = 0.0
-        last = self._monotonic_clock()
-        arrived_since = None
-        self._direct_control_pub.publish(Bool(True))
-        try:
-            while not self._shutdown:
-                now = self._monotonic_clock()
-                if cancel is not None and cancel.is_set():
-                    return MotionResult(False, "COMMAND_HELD", "vertical motion cancelled")
-                if now >= float(deadline):
-                    return MotionResult(False, "LOCAL_TIMEOUT", "vertical motion deadline exceeded")
-                dt = max(0.001, min(0.1, now - last))
-                last = now
-                with self._lock:
-                    own = copy.deepcopy(self._last_pose)
-                if own is None:
-                    return MotionResult(False, "POSE_STALE", "local pose lost during vertical motion")
-                if not self._distance_safe(own):
-                    return MotionResult(False, "MIN_DISTANCE_BREACH",
-                                        "neighbor distance breached during vertical motion")
-                remaining = abs(layer_z - own.position.z)
-                braking_speed = math.sqrt(max(0.0, 2.0 * self._vertical_accel_mps2 * remaining))
-                target_speed = min(self._vertical_speed_mps, braking_speed)
-                speed = min(target_speed, speed + self._vertical_accel_mps2 * dt)
-                next_z = own.position.z + direction * speed * dt
-                if (direction > 0 and next_z > layer_z) or (direction < 0 and next_z < layer_z):
-                    next_z = layer_z
-                captured.position.z = next_z
-                self._publish_setpoint(captured)
-                dx = own.position.x - captured.position.x
-                dy = own.position.y - captured.position.y
-                position_error = math.sqrt(dx * dx + dy * dy + remaining * remaining)
-                if position_error <= self.pos_tolerance_m:
-                    if arrived_since is None:
-                        arrived_since = now
-                    elif now - arrived_since >= self.steady_s:
-                        return MotionResult(True, "", "vertical layer reached")
-                else:
-                    arrived_since = None
-                time.sleep(1.0 / _HOVER_SETPOINT_HZ)
-        finally:
-            self._direct_control_pub.publish(Bool(False))
-        return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
-
-    def _ensure_takeoff(self, cancel, deadline):
+    def _ensure_offboard(self, deadline):
         if not self._mavros_state_topic:
-            return MotionResult(True, "", "takeoff gate disabled without MAVROS state")
+            return MotionResult(True, "", "OFFBOARD preparation disabled without MAVROS state")
         with self._lock:
             state = copy.deepcopy(self._last_mavros_state)
             origin_confirmed = self._origin_confirmed
@@ -391,6 +328,10 @@ class EgoSwarmDriver(MotionDriver):
             return MotionResult(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
         if pose is None:
             return MotionResult(False, "POSE_STALE", "no local pose for takeoff")
+        if self._configure_px4_params:
+            configured = self._configure_px4_failsafe_params()
+            if not configured.success:
+                return configured
         from mavros_msgs.srv import CommandBool, SetMode
         arm = self._ros.ServiceProxy(self._arm_service, CommandBool)
         mode = self._ros.ServiceProxy(self._mode_service, SetMode)
@@ -411,13 +352,40 @@ class EgoSwarmDriver(MotionDriver):
             time.sleep(0.05)
         else:
             return MotionResult(False, "ARM_OFFBOARD_TIMEOUT", "armed/OFFBOARD state was not observed")
-        old_steady = self.steady_s
-        self.steady_s = self._takeoff_stable_s
+        return MotionResult(True, "", "armed vehicle is ready for Ego trajectory")
+
+    def _configure_px4_failsafe_params(self):
+        """Configure the explicit no-RC SITL policy before OFFBOARD/arming.
+
+        This belongs to the onboard flight driver, not the GCS command client.
+        The values are intentionally launch-configured because the no-RC
+        exception is suitable for SITL only and must not silently affect a real
+        vehicle.  ParamSet replies are checked immediately; continuing after a
+        rejected or unavailable parameter would make the takeoff result
+        ambiguous and can leave PX4 in RTL before the START response arrives.
+        """
+        from mavros_msgs.msg import ParamValue
+        from mavros_msgs.srv import ParamSet
+
         try:
-            return self._plan_vertical_transition(pose.position.z + self._takeoff_height_m,
-                                                  cancel, deadline)
-        finally:
-            self.steady_s = old_steady
+            self._ros.wait_for_service(
+                "/mavros/param/set", timeout=self._px4_param_set_timeout_s)
+            param_set = self._ros.ServiceProxy("/mavros/param/set", ParamSet)
+            for name, integer in self._px4_params.items():
+                value = ParamValue(integer=int(integer))
+                response = param_set(name, value)
+                if not response.success:
+                    return MotionResult(False, "PX4_PARAM_REJECTED",
+                                        "PX4 rejected %s=%s" % (name, integer))
+                returned = getattr(response.value, "integer", None)
+                if returned is not None and int(returned) != int(integer):
+                    return MotionResult(False, "PX4_PARAM_VERIFY_FAILED",
+                                        "PX4 returned %s=%s for %s" %
+                                        (name, returned, integer))
+        except Exception as error:
+            return MotionResult(False, "PX4_PARAM_UNAVAILABLE",
+                                "cannot configure PX4 takeoff parameters: %s" % error)
+        return MotionResult(True, "", "PX4 takeoff parameters configured")
 
     def _plan_horizontal(self, goal, cancel, deadline):
         with self._lock:
@@ -429,39 +397,6 @@ class EgoSwarmDriver(MotionDriver):
         else:
             self._publish_goal(goal)
         return self._wait_for_terminal(cancel, deadline, self._run_start_mono_s)
-
-    def _hover_loop(self, goal, cancel, deadline):
-        """Freeze the current local pose at HOVER receipt and republish it."""
-        with self._lock:
-            pose = self._last_pose
-        if pose is None:
-            return MotionResult(False, "POSE_STALE", "no local pose to freeze for HOVER")
-        captured = copy.deepcopy(pose)
-        arrived_since = None
-        rate = 1.0 / _HOVER_SETPOINT_HZ
-        self._direct_control_pub.publish(Bool(True))
-        try:
-            while not self._shutdown:
-                if cancel is not None and cancel.is_set():
-                    return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
-                if self._monotonic_clock() >= float(deadline):
-                    return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
-                self._publish_setpoint(captured)
-                now = self._monotonic_clock()
-                with self._lock:
-                    own = self._last_pose
-                if own is not None and self._near(own, captured):
-                    if arrived_since is None:
-                        arrived_since = now
-                    elif now - arrived_since >= self.steady_s:
-                        self._emit_completed()
-                        return MotionResult(True, "", "hover frozen setpoint reached")
-                else:
-                    arrived_since = None
-                time.sleep(rate)
-        finally:
-            self._direct_control_pub.publish(Bool(False))
-        return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
 
     def _follower_loop(self, goal, cancel, deadline):
         """Track leader odom + formation offset with position-loop PI control."""
@@ -476,7 +411,7 @@ class EgoSwarmDriver(MotionDriver):
         self._ensure_leader_odom_sub(leader_id)
         integral = [0.0, 0.0, 0.0]
         loop_dt = 1.0 / _FOLLOW_LOOP_HZ
-        publish_dt = 1.0 / _HOVER_SETPOINT_HZ
+        publish_dt = 1.0 / _SETPOINT_HZ
         last_calc = None
         last_setpoint = None
         arrived_since = None
@@ -554,34 +489,13 @@ class EgoSwarmDriver(MotionDriver):
 
     def start_move_to(self, goal, cancel_event, deadline):
         if goal.command == "MOVE_TO":
-            takeoff = self._ensure_takeoff(cancel_event, deadline)
-            if not takeoff.success:
-                return takeoff
+            prepared = self._ensure_offboard(deadline)
+            if not prepared.success:
+                return prepared
         if goal.command == "HOVER":
-            return self._hover_loop(goal, cancel_event, deadline)
-        if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
-            result = self._plan_vertical_transition(self._layer_follow_route,
-                                                    cancel_event, deadline)
-            if not result.success:
-                return result
-            return self._follower_loop(goal, cancel_event, deadline)
-        if goal.command == "MOVE_TO":
-            result = self._plan_vertical_transition(self._layer_move_to,
-                                                    cancel_event, deadline)
-            if not result.success:
-                return result
-            horizontal = MotionGoal(goal.x, goal.y, self._layer_move_to, goal.yaw,
-                                    command="MOVE_TO", layer_z=self._layer_move_to)
-            result = self._plan_horizontal(horizontal, cancel_event, deadline)
-            if not result.success:
-                return result
-            return self._plan_vertical_transition(goal.z, cancel_event, deadline)
-        if goal.command in ("FAULT_EXIT", "FOLLOW_ROUTE"):
-            layer_z = self._layer_for_goal(goal)
-            result = self._plan_vertical_transition(layer_z, cancel_event, deadline)
-            if not result.success:
-                return result
             return self._plan_horizontal(goal, cancel_event, deadline)
+        if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
+            return self._follower_loop(goal, cancel_event, deadline)
         return self._plan_horizontal(goal, cancel_event, deadline)
 
     def hold(self, goal: HoldGoal, deadline):
@@ -681,19 +595,22 @@ class EgoSwarmDriver(MotionDriver):
             follower_i_gain=rospy.get_param("~ego_swarm/follower_i_gain", 0.1),
             follower_limit_xy=rospy.get_param("~ego_swarm/follower_limit_xy", 2.0),
             follower_limit_z=rospy.get_param("~ego_swarm/follower_limit_z", 1.0),
-            layer_move_to=rospy.get_param("~ego_swarm/layer_move_to", 15.0),
-            layer_follow_route=rospy.get_param("~ego_swarm/layer_follow_route", 12.0),
-            layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
             formation_offsets=rospy.get_param("~ego_swarm/formation_offsets", {}),
             leader_odom_topic_prefix=rospy.get_param("~ego_swarm/leader_odom_topic_prefix", ""),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),
             mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
             origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),
-            takeoff_height_m=rospy.get_param("~ego_swarm/takeoff_height_m", 5.0),
-            takeoff_stable_s=rospy.get_param("~ego_swarm/takeoff_stable_s", 2.0),
-            vertical_speed_mps=rospy.get_param("~ego_swarm/vertical_speed_mps", 1.0),
-            vertical_accel_mps2=rospy.get_param("~ego_swarm/vertical_accel_mps2", 0.5),
             neighbor_odom_topics=neighbor_odom_topics,
             min_horizontal_distance_m=rospy.get_param("~ego_swarm/min_horizontal_distance_m", 1.0),
             min_vertical_distance_m=rospy.get_param("~ego_swarm/min_vertical_distance_m", 2.0),
+            configure_px4_params=rospy.get_param(
+                "~ego_swarm/configure_px4_params", False),
+            px4_param_set_timeout_s=rospy.get_param(
+                "~ego_swarm/px4_param_set_timeout_s", 5.0),
+            px4_params={
+                "COM_RCL_EXCEPT": rospy.get_param(
+                    "~ego_swarm/com_rcl_except", 4),
+                "NAV_RCL_ACT": rospy.get_param(
+                    "~ego_swarm/nav_rcl_act", 0),
+            },
         )
