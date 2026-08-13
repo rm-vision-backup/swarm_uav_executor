@@ -69,6 +69,5 @@
     <param name="ego_swarm/px4_param_set_timeout_s" value="5.0" />
     <param name="ego_swarm/com_rcl_except" value="4" />
     <param name="ego_swarm/nav_rcl_act" value="0" />
-    <param name="safety_lease/required_for_tasks" value="true" />
   </node>
 </launch>

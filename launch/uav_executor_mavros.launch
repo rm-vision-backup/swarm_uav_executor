@@ -21,6 +21,5 @@
     <param name="mavros_position/frame_id" value="$(arg frame_id)" />
     <param name="mavros_position/auto_arm" value="false" />
     <param name="mavros_position/auto_offboard" value="false" />
-    <param name="safety_lease/required_for_tasks" value="true" />
   </node>
 </launch>

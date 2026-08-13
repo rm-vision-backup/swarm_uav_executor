@@ -33,7 +33,4 @@ class MockMotionDriver(MotionDriver):
     def health(self):
         return DriverHealth(self.ready, "" if self.ready else "DRIVER_NOT_READY", "" if self.ready else "mock driver is not ready")
 
-    def can_end_safety_lease(self, _disarmed_stable_s):
-        return True, "mock driver is explicitly safe to end"
-
     def shutdown(self): self._shutdown = True

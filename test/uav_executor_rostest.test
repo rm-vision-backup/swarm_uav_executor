@@ -1,7 +1,6 @@
 <launch>
   <include file="$(find swarm_uav_executor)/launch/uav_executor_mock.launch">
     <arg name="uav_id" value="A01"/><arg name="exec_target" value="UAV1"/><arg name="result_delay_s" value="0.1"/>
-    <arg name="safety_lease_required" value="true"/>
   </include>
   <test test-name="uav_executor_ros" pkg="swarm_uav_executor" type="test_uav_executor_ros.py" time-limit="15" />
 </launch>

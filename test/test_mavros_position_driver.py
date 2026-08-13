@@ -105,22 +105,6 @@ class MavrosPositionDriverTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MavrosPositionDriver(auto_offboard=True, ros=FakeRos())
 
-    def test_end_requires_stably_disarmed_state(self):
-        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertFalse(safe)
-        self.ros.now = 3.0
-        self.driver._state_callback(State(connected=True, armed=False))
-        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertTrue(safe)
-        self.driver._state_callback(State(connected=True, armed=True))
-        safe, _ = self.driver.can_end_safety_lease(3.0); self.assertFalse(safe)
-
-    def test_end_rejects_stale_or_disconnected_state(self):
-        self.ros.now = 3.0
-        safe, message = self.driver.can_end_safety_lease(3.0)
-        self.assertFalse(safe); self.assertIn("stale", message)
-        self.driver._state_callback(State(connected=False, armed=False))
-        safe, message = self.driver.can_end_safety_lease(3.0)
-        self.assertFalse(safe); self.assertIn("disconnected", message)
-
     def test_exposes_ros_clock_and_shutdown_stops_all_handles(self):
         self.ros.now = 4.2
         self.assertEqual(self.driver.clock(), 4.2)

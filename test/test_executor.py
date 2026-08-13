@@ -19,9 +19,6 @@ def make(delay=.05,success=True):
     driver=MockMotionDriver(delay,success,"TEST_FAILED","done")
     return UavTaskExecutor(identity,config,store,reporter,driver),store,publisher,driver
 
-class LeaseGuard:
-    def __init__(self, permitted=False): self.permitted=permitted
-    def permits_task(self, _mission_id): return self.permitted
 class ExecutorTest(unittest.TestCase):
     def test_explicit_start_prepares_without_motion_then_starts(self):
         executor,store,_,driver=make(.01)
@@ -71,33 +68,4 @@ class ExecutorTest(unittest.TestCase):
         executor.handle_task(request()); time.sleep(.08); record=next(iter(store._records.values()))
         self.assertEqual(record.error_code,"HOLD_FAILED")
         self.assertIn("TEST_FAILED",record.message); self.assertEqual(driver.hold_count,1)
-    def test_requires_active_lease_when_guard_is_installed(self):
-        executor,_,_,driver=make(); guard=LeaseGuard(False); executor.lease_guard=guard
-        self.assertEqual(executor.handle_task(request()).error_code,"LEASE_NOT_ACTIVE")
-        self.assertEqual(driver.start_count,0); guard.permitted=True
-        self.assertTrue(executor.handle_task(request()).accepted)
-    def test_lease_expiry_holds_active_task_and_latches_new_work(self):
-        executor,store,_,driver=make(.4); guard=LeaseGuard(True); executor.lease_guard=guard
-        self.assertTrue(executor.handle_task(request()).accepted)
-        result=executor.trigger_local_safety_hold("LEASE_EXPIRED","GCS lease expired")
-        self.assertTrue(result.success); self.assertEqual(driver.hold_count,1)
-        record=next(iter(store._records.values()))
-        self.assertEqual(record.status,"FAILED"); self.assertEqual(record.error_code,"LEASE_EXPIRED")
-        self.assertEqual(executor.handle_task(request("c2")).error_code,"LEASE_EXPIRED")
-        executor.trigger_local_safety_hold("LEASE_EXPIRED","duplicate")
-        self.assertEqual(driver.hold_count,1)
-    def test_lease_expiry_holds_between_tasks(self):
-        executor,_,_,driver=make(); executor.lease_guard=LeaseGuard(True)
-        self.assertTrue(executor.trigger_local_safety_hold("LEASE_EXPIRED","expired").success)
-        self.assertEqual(driver.hold_count,1)
-    def test_safe_lease_end_releases_latch_without_reviving_old_task(self):
-        executor,store,_,driver=make(.4); executor.lease_guard=LeaseGuard(True)
-        self.assertTrue(executor.handle_task(request()).accepted)
-        executor.trigger_local_safety_hold("LEASE_EXPIRED","expired")
-        old_record=next(iter(store._records.values()))
-        self.assertEqual(old_record.error_code,"LEASE_EXPIRED")
-        executor.release_local_safety_latch()
-        self.assertTrue(executor.handle_task(request("c2")).accepted)
-        self.assertEqual(old_record.error_code,"LEASE_EXPIRED")
-        self.assertEqual(driver.start_count,2)
 if __name__ == "__main__": unittest.main()

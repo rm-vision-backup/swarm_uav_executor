@@ -126,25 +126,6 @@ class MavrosPositionDriver(MotionDriver):
             elif self._disarmed_since_monotonic_s is None:
                 self._disarmed_since_monotonic_s = self._monotonic_clock()
 
-    def can_end_safety_lease(self, disarmed_stable_s):
-        with self._lock:
-            state = copy.deepcopy(self._state)
-            disarmed_since = self._disarmed_since_monotonic_s
-            state_received = self._state_received_monotonic_s
-        if state is None:
-            return False, "MAVROS state has not been received"
-        now = self._monotonic_clock()
-        if state_received is None or now - state_received > self.state_timeout_s:
-            return False, "MAVROS state is stale"
-        if not state.connected:
-            return False, "MAVROS is disconnected"
-        if state.armed or disarmed_since is None:
-            return False, "vehicle is armed"
-        stable_for = now - disarmed_since
-        if stable_for < float(disarmed_stable_s):
-            return False, "vehicle disarm state is not yet stable"
-        return True, "vehicle is stably disarmed"
-
     def _set_target(self, target):
         if target.header.frame_id != self.frame_id:
             raise ValueError("target frame does not match configured local frame")

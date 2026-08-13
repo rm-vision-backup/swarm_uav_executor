@@ -2,18 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Optional, Tuple
+from typing import Tuple
 
 PROTOCOL_VERSION = "1.0"
 STATE_ACCEPTED = "ACCEPTED"
 STATE_COMPLETED = "COMPLETED"
 STATE_FAILED = "FAILED"
 TERMINAL_STATES = frozenset((STATE_COMPLETED, STATE_FAILED))
-
-LEASE_INACTIVE = "INACTIVE"
-LEASE_ACTIVE = "ACTIVE"
-LEASE_EXPIRED_HOLD = "EXPIRED_HOLD"
-LEASE_END_PENDING = "END_PENDING"
 
 
 @dataclass(frozen=True)
@@ -40,45 +35,6 @@ class ExecutorConfig:
     follower_i_gain: float = 0.1        # position-error integral gain
     follower_limit_xy: float = 2.0      # max horizontal follower setpoint compensation (m/s equivalent)
     follower_limit_z: float = 1.0       # max vertical follower compensation (m/s)
-
-
-@dataclass(frozen=True)
-class SafetyLeaseConfig:
-    service_name: str
-    watchdog_hz: float = 10.0
-    default_ttl_s: float = 5.0
-    min_ttl_s: float = 1.0
-    max_ttl_s: float = 30.0
-    disarmed_stable_s: float = 3.0
-    required_for_tasks: bool = True
-
-
-@dataclass(frozen=True)
-class SafetyLeaseRecord:
-    mission_id: str
-    session_epoch: str
-    last_seq: int
-    ttl_s: float
-    last_renew_monotonic_s: float
-    state: str = LEASE_ACTIVE
-    expired_at_monotonic_s: Optional[float] = None
-
-
-@dataclass(frozen=True)
-class LeaseExpiryEvent:
-    mission_id: str
-    session_epoch: str
-    expired_at_monotonic_s: float
-    hold_success: Optional[bool] = None
-    error_code: str = ""
-    message: str = ""
-
-
-@dataclass(frozen=True)
-class SafetyHoldResult:
-    success: bool
-    error_code: str = ""
-    message: str = ""
 
 
 @dataclass(frozen=True, order=True)

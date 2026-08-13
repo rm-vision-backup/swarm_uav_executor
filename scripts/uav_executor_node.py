@@ -3,10 +3,9 @@ import threading
 import time
 import rospy
 from swarm_uav_interfaces.msg import UavTaskState
-from swarm_uav_interfaces.srv import UavHold, UavSafetyLease, UavTask, UavTaskControl
+from swarm_uav_interfaces.srv import UavHold, UavTask, UavTaskControl
 from swarm_uav_executor.executor import UavTaskExecutor
-from swarm_uav_executor.models import ExecutorConfig, ExecutorIdentity, SafetyLeaseConfig
-from swarm_uav_executor.safety_lease import SafetyLeaseWatchdog
+from swarm_uav_executor.models import ExecutorConfig, ExecutorIdentity
 from swarm_uav_executor.state_reporter import StateReporter
 from swarm_uav_executor.task_store import TaskStore
 from swarm_uav_executor.drivers.mock import MockMotionDriver
@@ -42,29 +41,6 @@ def build_driver(driver_name):
     raise ValueError("unknown driver: %s" % driver_name)
 
 
-class MonotonicWatchdogThread:
-    def __init__(self, watchdog, frequency_hz):
-        if frequency_hz <= 0.0: raise ValueError("watchdog_hz must be positive")
-        self.watchdog = watchdog; self.period_s = 1.0 / float(frequency_hz)
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def _run(self):
-        while not self._stop.wait(self.period_s):
-            event = self.watchdog.check_expiry()
-            if event is not None:
-                if event.hold_success:
-                    rospy.logerr("safety lease expired and local HOLD latched mission=%s epoch=%s",
-                                 event.mission_id, event.session_epoch)
-                else:
-                    rospy.logfatal("safety lease expired but local HOLD failed mission=%s epoch=%s error=%s message=%s",
-                                   event.mission_id, event.session_epoch, event.error_code, event.message)
-
-    def shutdown(self):
-        self._stop.set(); self._thread.join(max(1.0, self.period_s * 2.0))
-
-
 def main():
     rospy.init_node("uav_executor")
     identity, config = load_config_from_ros_params(); driver_name = rospy.get_param("~driver", "mock")
@@ -75,31 +51,12 @@ def main():
     # MAVROS follows ROS time so SITL /use_sim_time cannot be mixed with wall time.
     executor = UavTaskExecutor(identity, config, store, reporter, driver,
                                clock=getattr(driver, "clock", None) or __import__("time").time)
-    service_namespace = config.task_service.rsplit("/", 1)[0]
-    lease_config = SafetyLeaseConfig(
-        rospy.get_param("~safety_lease/service", service_namespace + "/uav_safety_lease"),
-        float(rospy.get_param("~safety_lease/watchdog_hz", 10.0)),
-        float(rospy.get_param("~safety_lease/default_ttl_s", 5.0)),
-        float(rospy.get_param("~safety_lease/min_ttl_s", 1.0)),
-        float(rospy.get_param("~safety_lease/max_ttl_s", 30.0)),
-        float(rospy.get_param("~safety_lease/disarmed_stable_s", 3.0)),
-        bool(rospy.get_param("~safety_lease/required_for_tasks", driver_name in ("mavros_position", "ego_swarm"))),
-    )
-    watchdog = SafetyLeaseWatchdog(
-        identity, lease_config,
-        lambda _event: executor.trigger_local_safety_hold("LEASE_EXPIRED", "GCS safety lease expired"),
-        lambda: driver.can_end_safety_lease(lease_config.disarmed_stable_s), time.monotonic,
-        executor.release_local_safety_latch)
-    executor.lease_guard = watchdog
     task_service = rospy.Service(config.task_service, UavTask, executor.handle_task)
     task_control_service = rospy.Service(config.task_control_service, UavTaskControl, executor.handle_task_control)
     hold_service = rospy.Service(config.hold_service, UavHold, executor.handle_hold)
-    lease_service = rospy.Service(lease_config.service_name, UavSafetyLease, watchdog.handle_lease)
-    watchdog_thread = MonotonicWatchdogThread(watchdog, lease_config.watchdog_hz)
 
     def shutdown():
-        watchdog_thread.shutdown()
-        for service in (lease_service, task_control_service, task_service, hold_service): service.shutdown("executor shutdown")
+        for service in (task_control_service, task_service, hold_service): service.shutdown("executor shutdown")
         executor.shutdown()
 
     rospy.on_shutdown(shutdown)

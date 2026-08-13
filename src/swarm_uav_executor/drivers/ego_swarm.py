@@ -451,39 +451,6 @@ class EgoSwarmDriver(MotionDriver):
                 return DriverHealth(False, "ORIGIN_NOT_CONFIRMED", "global origin has not been confirmed")
         return DriverHealth(True, "", "arm-before checks passed")
 
-    def can_end_safety_lease(self, disarmed_stable_s):
-        # Base gate: fresh local pose and no active trajectory.
-        with self._lock:
-            pose_fresh = (self._last_pose_mono_s is not None and
-                          self._monotonic_clock() - self._last_pose_mono_s <= self.pose_timeout_s)
-            running = self._last_cmd_reply == _STATE_EXECUTING
-            state = copy.deepcopy(self._last_mavros_state) if self._mavros_state_topic else None
-            state_received = self._last_mavros_state_mono_s
-            disarmed_since = self._disarmed_since_mono_s
-        if not pose_fresh:
-            return False, "local pose is stale for lease END gate"
-        if running:
-            return False, "trajectory still executing"
-        # When a MAVROS state topic is configured, the END gate also requires
-        # MAVROS to be connected, state fresh and the vehicle stably disarmed
-        # (mirrors MavrosPositionDriver). Without it (pure ego smoke) the base
-        # gate remains sufficient.
-        if self._mavros_state_topic:
-            if state is None:
-                return False, "MAVROS state has not been received"
-            now = self._monotonic_clock()
-            if state_received is None or now - state_received > self.pose_timeout_s:
-                return False, "MAVROS state is stale"
-            if not state.connected:
-                return False, "MAVROS is disconnected"
-            if state.armed or disarmed_since is None:
-                return False, "vehicle is armed"
-            stable_for = now - disarmed_since
-            if stable_for < float(disarmed_stable_s):
-                return False, "vehicle disarm state is not yet stable"
-            return True, "ego pose fresh, MAVROS connected and vehicle stably disarmed"
-        return True, "ego pose fresh and trajectory not executing"
-
     def shutdown(self):
         self._shutdown = True
 

@@ -5,7 +5,6 @@
   <arg name="result_delay_s" default="0.5" /> <arg name="final_success" default="true" />
   <arg name="error_code" default="" /> <arg name="message" default="mock UAV task finished" />
   <arg name="hold_success" default="true" />
-  <arg name="safety_lease_required" default="false" />
   <node pkg="swarm_uav_executor" type="uav_executor_node.py" name="uav_executor_$(arg uav_id)" output="screen" required="true">
     <rosparam command="load" file="$(find swarm_uav_executor)/config/executor_defaults.yaml" />
     <param name="uav_id" value="$(arg uav_id)" /> <param name="exec_target" value="$(arg exec_target)" />
@@ -14,6 +13,5 @@
     <param name="mock/final_success" value="$(arg final_success)" /> <param name="mock/error_code" value="$(arg error_code)" />
     <param name="mock/message" value="$(arg message)" /> <param name="mock/hold_success" value="$(arg hold_success)" />
     <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
-    <param name="safety_lease/required_for_tasks" value="$(arg safety_lease_required)" />
   </node>
 </launch>
