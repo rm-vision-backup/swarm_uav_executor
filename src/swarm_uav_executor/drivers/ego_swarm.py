@@ -21,7 +21,7 @@ import threading
 import time
 
 import rospy
-from geometry_msgs.msg import PointStamped, PolygonStamped, PoseStamped
+from geometry_msgs.msg import Point32, PointStamped, PolygonStamped, PoseStamped
 from std_msgs.msg import Bool, Empty, Float64, String
 
 from .base import MotionDriver
@@ -70,7 +70,10 @@ class EgoSwarmDriver(MotionDriver):
                  neighbor_odom_topics='', min_horizontal_distance_m=1.0,
                   min_vertical_distance_m=2.0, configure_px4_params=False,
                   px4_param_set_timeout_s=5.0,
-                  px4_params=None):
+                  px4_params=None,
+                  layer_move_to=15.0, layer_follow_route=12.0,
+                  layer_fault_exit=8.0, layer_tolerance_m=0.5,
+                  waypoint_densify_spacing=2.0):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -169,6 +172,11 @@ class EgoSwarmDriver(MotionDriver):
                 topic, Odometry, self._on_neighbor_odom, callback_args=topic, queue_size=1))
         self._min_horizontal_distance_m = float(min_horizontal_distance_m)
         self._min_vertical_distance_m = float(min_vertical_distance_m)
+        self._layer_move_to = float(layer_move_to)
+        self._layer_follow_route = float(layer_follow_route)
+        self._layer_fault_exit = float(layer_fault_exit)
+        self._layer_tolerance_m = float(layer_tolerance_m)
+        self._waypoint_densify_spacing = float(waypoint_densify_spacing)
         self._arm_service = arm_service
         self._mode_service = mode_service
 
@@ -258,9 +266,77 @@ class EgoSwarmDriver(MotionDriver):
             if index < len(goal.waypoints) - 1:
                 waypoints.append(wp)
         for wp in waypoints:
-            p = msg.polygon.points.add()
+            p = Point32()
             p.x, p.y, p.z = wp[0], wp[1], wp[2]
+            msg.polygon.points.append(p)
         self._waypoints_pub.publish(msg)
+
+    def _publish_waypoints_from_list(self, points):
+        """Publish an already-densified ENU waypoint list to the C++ node."""
+        msg = PolygonStamped()
+        msg.header.stamp = self._ros.Time.now()
+        for point in points:
+            p = Point32()
+            p.x, p.y, p.z = point[0], point[1], point[2]
+            msg.polygon.points.append(p)
+        self._waypoints_pub.publish(msg)
+
+    def _last_position_enu(self):
+        with self._lock:
+            if self._last_pose is None:
+                return None
+            pos = self._last_pose.position
+            return (pos.x, pos.y, pos.z)
+
+    def _build_layered_keypoints(self, goal, start):
+        """Build command-specific layered keypoints (vertical/horizontal/vertical).
+
+        Returns [] when the goal is already reachable on the target layer or
+        the command has no layering semantics (HOVER).
+        """
+        if start is None:
+            return []
+        sx, sy, sz = start
+        gx, gy, gz = goal.x, goal.y, goal.z
+        if goal.command == "MOVE_TO":
+            layer = self._layer_move_to
+        elif goal.command == "FAULT_EXIT":
+            layer = self._layer_fault_exit
+        elif goal.command == "FOLLOW_ROUTE":
+            layer = self._layer_follow_route
+        else:
+            return []
+        points = []
+        if abs(sz - layer) > self._layer_tolerance_m:
+            points.append((sx, sy, layer))
+        if goal.command == "FOLLOW_ROUTE" and goal.waypoints:
+            for waypoint in goal.waypoints:
+                points.append((float(waypoint[0]), float(waypoint[1]), layer))
+            if abs(gz - layer) > self._layer_tolerance_m:
+                points.append((gx, gy, gz))
+        else:
+            points.append((gx, gy, layer))
+            if abs(gz - layer) > self._layer_tolerance_m:
+                points.append((gx, gy, gz))
+        return points
+
+    def _densify_waypoints(self, points, max_spacing):
+        """Uniformly interpolate so every adjacent pair is at most max_spacing
+        apart.  Ported from verification/plot_ego_bspline_waypoints.py."""
+        if max_spacing <= 0.0 or len(points) < 2:
+            return [tuple(point) for point in points]
+        dense = [tuple(points[0])]
+        for left, right in zip(points, points[1:]):
+            lx, ly, lz = left
+            rx, ry, rz = right
+            distance = math.sqrt((rx - lx) ** 2 + (ry - ly) ** 2 + (rz - lz) ** 2)
+            segments = max(1, int(math.ceil(distance / max_spacing)))
+            for index in range(1, segments + 1):
+                t = index / segments
+                dense.append((lx + (rx - lx) * t,
+                              ly + (ry - ly) * t,
+                              lz + (rz - lz) * t))
+        return dense
 
     def _publish_setpoint(self, pose):
         msg = PoseStamped()
@@ -304,7 +380,20 @@ class EgoSwarmDriver(MotionDriver):
             self._last_cmd_reply = None
             self._run_start_mono_s = self._monotonic_clock()
         self._goal_yaw_pub.publish(Float64(goal.yaw))
-        if goal.waypoints:
+        # 方案 B：非 follower 自主动作先构造含动作分层的关键点序列并按最大
+        # waypoint_densify_spacing（2m）均匀密化，作为 waypoints 发布给 C++；
+        # C++ 负责 planning_horizon 滚动局部规划。HOVER 保持原有冻结语义。
+        if goal.command in ("MOVE_TO", "FAULT_EXIT") or (
+                goal.command == "FOLLOW_ROUTE" and not goal.formation_follow):
+            start = self._last_position_enu()
+            keypoints = self._build_layered_keypoints(goal, start)
+            if keypoints:
+                dense = self._densify_waypoints(
+                    keypoints, self._waypoint_densify_spacing)
+                self._publish_waypoints_from_list(dense)
+            else:
+                self._publish_goal(goal)
+        elif goal.waypoints:
             self._publish_waypoints(goal)
         else:
             self._publish_goal(goal)
@@ -475,6 +564,12 @@ class EgoSwarmDriver(MotionDriver):
             follower_limit_z=rospy.get_param("~ego_swarm/follower_limit_z", 1.0),
             formation_offsets=rospy.get_param("~ego_swarm/formation_offsets", {}),
             leader_odom_topic_prefix=rospy.get_param("~ego_swarm/leader_odom_topic_prefix", ""),
+            layer_move_to=rospy.get_param("~ego_swarm/layer_move_to", 15.0),
+            layer_follow_route=rospy.get_param("~ego_swarm/layer_follow_route", 12.0),
+            layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
+            layer_tolerance_m=rospy.get_param("~ego_swarm/layer_tolerance_m", 0.5),
+            waypoint_densify_spacing=rospy.get_param(
+                "~ego_swarm/waypoint_densify_spacing", 2.0),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),
             mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
             origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),

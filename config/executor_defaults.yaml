@@ -27,6 +27,13 @@ ego_swarm:
   follower_i_gain: 0.1
   follower_limit_xy: 2.0
   follower_limit_z: 1.0
+  # 方案 B：命令分层高度（MOVE_TO 15m / FOLLOW_ROUTE 12m / FAULT_EXIT 8m）
+  # 与航点密化最大间距：上层生成含动作分层关键点并 2m 均匀密化后发布 waypoints
+  layer_move_to: 15.0
+  layer_follow_route: 12.0
+  layer_fault_exit: 8.0
+  layer_tolerance_m: 0.5
+  waypoint_densify_spacing: 2.0
 mavros_position:
   namespace: /mavros
   frame_id: map

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import math
 import threading
 import time
 import unittest
@@ -150,12 +151,12 @@ class EgoSwarmDriverTest(unittest.TestCase):
         driver, _ = self._driver()
         self._emit_pose(driver, 1.0, 2.0, 10.0)
         goal = MotionGoal(999, 999, 10, 0, command="HOVER", layer_z=10.0)
-        driver._plan_horizontal = lambda actual_goal, cancel, deadline: (
-            self.assertEqual((actual_goal.x, actual_goal.y, actual_goal.z), (999, 999, 10)) or
-            MotionResult(True, "", "ok"))
-        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 1.0)
-        self.assertTrue(result.success)
+        # HOVER 语义：冻结当前位置，不走分层关键点/waypoints，仍发布 /goal 单点。
+        event = threading.Event(); event.set()
+        result = driver.start_move_to(goal, event, time.monotonic() + 1.0)
+        self.assertEqual(result.error_code, "COMMAND_HELD")
         self.assertEqual(len(driver._goal_pub.msgs), 1)
+        self.assertEqual(len(driver._waypoints_pub.msgs), 0)
 
     # ---- FOLLOW_ROUTE follower: PI tracking of leader + offset ----
 
@@ -234,6 +235,64 @@ class EgoSwarmDriverTest(unittest.TestCase):
         points = driver._waypoints_pub.msgs[0].polygon.points
         self.assertEqual([(p.x, p.y, p.z) for p in points],
                          [(1, 0, 5), (1, 0, 5), (2, 0, 10), (2, 0, 10), (3, 0, 12)])
+
+    # ---- 方案 B：分层关键点 + 2m 密化 + waypoints 发布 ----
+
+    def test_move_to_builds_layered_keypoints(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
+        keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
+        self.assertEqual(keypoints,
+                         [(0.0, 0.0, 15.0), (50.0, -17.5, 15.0), (50.0, -17.5, 12.0)])
+
+    def test_move_to_skips_vertical_when_already_on_layer(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
+        keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 15.0))
+        self.assertEqual(keypoints, [(50.0, -17.5, 15.0), (50.0, -17.5, 12.0)])
+
+    def test_fault_exit_layers_at_8m(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(10.0, 0.0, 8.0, 0, command="FAULT_EXIT")
+        keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 15.0))
+        self.assertEqual(keypoints, [(0.0, 0.0, 8.0), (10.0, 0.0, 8.0)])
+
+    def test_follow_route_leader_layers_at_12m(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(3.0, 0.0, 12.0, 0, command="FOLLOW_ROUTE",
+                          waypoints=((1, 0, 5, 0), (2, 0, 10, 0), (3, 0, 12, 0)))
+        keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
+        self.assertEqual(keypoints,
+                         [(0.0, 0.0, 12.0), (1.0, 0.0, 12.0), (2.0, 0.0, 12.0),
+                          (3.0, 0.0, 12.0)])
+
+    def test_hover_returns_empty_keypoints(self):
+        driver, _ = self._driver()
+        goal = MotionGoal(1.0, 0.0, 15.0, 0, command="HOVER")
+        self.assertEqual(driver._build_layered_keypoints(goal, (0.0, 0.0, 15.0)), [])
+
+    def test_densify_waypoints_bounds_spacing(self):
+        driver, _ = self._driver()
+        dense = driver._densify_waypoints([(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)], 2.0)
+        self.assertGreaterEqual(len(dense), 6)
+        distances = [math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+                     for a, b in zip(dense, dense[1:])]
+        self.assertLessEqual(max(distances), 2.0 + 1e-9)
+
+    def test_move_to_publishes_waypoints_not_goal(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 5.0)
+        goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
+        keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
+        dense = driver._densify_waypoints(keypoints, 2.0)
+        driver._publish_waypoints_from_list(dense)
+        msgs = driver._waypoints_pub.msgs
+        self.assertEqual(len(msgs), 1)
+        pts = msgs[0].polygon.points
+        self.assertGreaterEqual(len(pts), 30)  # 50m/2m≈25 + 垂直段
+        self.assertEqual((pts[0].x, pts[0].y, pts[0].z), (0.0, 0.0, 15.0))
+        self.assertAlmostEqual(pts[-1].x, 50.0)
+        self.assertAlmostEqual(pts[-1].z, 12.0)
 
 
 if __name__ == "__main__":
