@@ -26,7 +26,7 @@
     <param name="setpoint_rate_hz" value="30.0" />
     <param name="max_vel" value="1.0" />
     <param name="local_pose_timeout_s" value="1.0" />
-    <param name="position_tolerance_m" value="0.2" />
+    <param name="position_tolerance_m" value="0.6" />
     <param name="arrival_stable_s" value="1.0" />
     <param name="terminal_to_idle_s" value="2.0" />
     <param name="idle_hover_refresh_hz" value="1.0" />
