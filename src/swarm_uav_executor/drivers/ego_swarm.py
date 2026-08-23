@@ -22,6 +22,7 @@ import time
 
 import rospy
 from geometry_msgs.msg import Point32, PointStamped, PolygonStamped, PoseStamped
+from mavros_msgs.msg import PositionTarget
 from std_msgs.msg import Bool, Empty, Float64, String
 
 from .base import MotionDriver
@@ -40,6 +41,16 @@ _MONITOR_HZ = 20.0
 _SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
 _FOLLOW_LOOP_HZ = 10.0         # follower PI control update rate
+
+# PositionTarget 契约（与 setpoint_relay 校验一致）：
+#   follower PI: position + velocity + yaw, ignore acceleration + yaw rate = 2496
+#   HOLD       : position + yaw, ignore velocity + acceleration + yaw rate = 2552
+_FOLLOWER_MASK = (PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY |
+                  PositionTarget.IGNORE_AFZ | PositionTarget.IGNORE_YAW_RATE)
+_HOLD_MASK = (PositionTarget.IGNORE_VX | PositionTarget.IGNORE_VY |
+              PositionTarget.IGNORE_VZ | PositionTarget.IGNORE_AFX |
+              PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ |
+              PositionTarget.IGNORE_YAW_RATE)
 
 
 def _split_topics(raw):
@@ -73,7 +84,8 @@ class EgoSwarmDriver(MotionDriver):
                   px4_params=None,
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
-                  waypoint_densify_spacing=0.4):
+                  waypoint_densify_spacing=0.4,
+                  follower_setpoint_topic="/setpoint/follower"):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -131,9 +143,12 @@ class EgoSwarmDriver(MotionDriver):
         self._hold_pub = ros.Publisher(
             self.namespace + "/hold", Empty, queue_size=1
         )
-        # 30 Hz position setpoint output used by HOVER and FOLLOW_ROUTE follower.
+        # Follower PI candidate topic: PositionTarget (mask 2496). EGO trajectory
+        # publishes /setpoint/ego; setpoint_relay arbitrates both sources and is
+        # the sole owner of /mavros/setpoint_raw/local.
+        self._follower_setpoint_topic = str(follower_setpoint_topic)
         self._setpoint_pub = ros.Publisher(
-            self.namespace + "/setpoint", PoseStamped, queue_size=1
+            self._follower_setpoint_topic, PositionTarget, queue_size=1
         )
         self._direct_control_pub = ros.Publisher(
             self.namespace + "/direct_control_active", Bool, queue_size=1)
@@ -344,9 +359,17 @@ class EgoSwarmDriver(MotionDriver):
         return dense
 
     def _publish_setpoint(self, pose):
-        msg = PoseStamped()
+        """Publish a frozen position/yaw HOLD candidate (PositionTarget mask 2552)."""
+        msg = PositionTarget()
         msg.header.stamp = self._ros.Time.now()
-        msg.pose = copy.deepcopy(pose)
+        msg.header.frame_id = "map"
+        msg.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+        msg.type_mask = _HOLD_MASK
+        msg.position = copy.deepcopy(pose.position)
+        msg.yaw = math.atan2(
+            2.0 * (pose.orientation.w * pose.orientation.z +
+                   pose.orientation.x * pose.orientation.y),
+            1.0 - 2.0 * (pose.orientation.y ** 2 + pose.orientation.z ** 2))
         self._setpoint_pub.publish(msg)
 
     def _issue_hold(self):
@@ -457,15 +480,17 @@ class EgoSwarmDriver(MotionDriver):
                         vel[1] *= scale
                     if abs(vel[2]) > self._follower_limit_z:
                         vel[2] = math.copysign(self._follower_limit_z, vel[2])
-                    setpoint = PoseStamped()
+                    # PositionTarget 候选：position=leader+offset（权威目标），
+                    # velocity=限幅后的 PI 输出（显式速度前馈），yaw=冻结参考航向。
+                    setpoint = PositionTarget()
                     setpoint.header.stamp = self._ros.Time.now()
-                    setpoint.pose.position.x = own_pose.position.x + vel[0] * loop_dt
-                    setpoint.pose.position.y = own_pose.position.y + vel[1] * loop_dt
-                    setpoint.pose.position.z = own_pose.position.z + vel[2] * loop_dt
-                    setpoint.pose.orientation.x = 0.0
-                    setpoint.pose.orientation.y = 0.0
-                    setpoint.pose.orientation.z = math.sin(goal.yaw / 2.0)
-                    setpoint.pose.orientation.w = math.cos(goal.yaw / 2.0)
+                    setpoint.header.frame_id = "map"
+                    setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
+                    setpoint.type_mask = _FOLLOWER_MASK
+                    setpoint.position.x, setpoint.position.y, setpoint.position.z = target
+                    setpoint.velocity.x, setpoint.velocity.y, setpoint.velocity.z = \
+                        vel[0], vel[1], vel[2]
+                    setpoint.yaw = goal.yaw
                     last_setpoint = setpoint
                     last_calc = now
                 if last_setpoint is not None:
@@ -575,6 +600,8 @@ class EgoSwarmDriver(MotionDriver):
             layer_tolerance_m=rospy.get_param("~ego_swarm/layer_tolerance_m", 0.5),
             waypoint_densify_spacing=rospy.get_param(
                 "~ego_swarm/waypoint_densify_spacing", 0.4),
+            follower_setpoint_topic=rospy.get_param(
+                "~ego_swarm/follower_setpoint_topic", "/setpoint/follower"),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),
             mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
             origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),

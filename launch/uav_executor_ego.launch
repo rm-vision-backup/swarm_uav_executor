@@ -34,7 +34,7 @@
     <param name="lambda_swarm" value="1.0" />
     <param name="lambda_smooth" value="1.0" />
     <param name="planning_horizon" value="5.0" />
-    <param name="replan_period_s" value="4.0" />
+    <param name="replan_period_s" value="1.0" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
@@ -44,11 +44,20 @@
     <param name="target_topic" value="/local_pose" />
   </node>
 
-  <!-- setpoint 中继：/setpoint -> /mavros/setpoint_position/local（PX4 执行依赖） -->
+  <!-- setpoint_relay：/mavros/setpoint_raw/local 的唯一 MAVROS setpoint 发布者。
+       订阅两个 PositionTarget 候选源（EGO /setpoint/ego、follower /setpoint/follower）、
+       选源 Bool 与本机 local pose；仲裁、freshness/finite 校验、模式 generation 隔离，
+       失效/切换期输出固定 position/yaw HOLD。禁止任何其他节点发布 MAVROS setpoint。 -->
   <node pkg="swarm_uav_executor" type="setpoint_relay_node.py"
         name="setpoint_relay" output="screen">
-    <param name="source_topic" value="/setpoint" />
-    <param name="target_topic" value="/mavros/setpoint_position/local" />
+    <param name="ego_topic" value="/setpoint/ego" />
+    <param name="follower_topic" value="/setpoint/follower" />
+    <param name="mode_topic" value="/direct_control_active" />
+    <param name="local_pose_topic" value="/mavros/local_position/pose" />
+    <param name="output_topic" value="/mavros/setpoint_raw/local" />
+    <param name="rate_hz" value="30.0" />
+    <param name="candidate_timeout_s" value="0.2" />
+    <param name="local_pose_timeout_s" value="1.0" />
   </node>
 
   <node pkg="swarm_uav_executor" type="uav_executor_node.py"
@@ -74,6 +83,7 @@
     <param name="ego_swarm/layer_fault_exit" value="8.0" />
     <param name="ego_swarm/layer_tolerance_m" value="0.5" />
     <param name="ego_swarm/waypoint_densify_spacing" value="0.4" />
+    <param name="ego_swarm/follower_setpoint_topic" value="/setpoint/follower" />
     <!-- No-RC SITL policy is explicit and must not be enabled by real-vehicle defaults. -->
     <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" />
     <param name="ego_swarm/px4_param_set_timeout_s" value="5.0" />

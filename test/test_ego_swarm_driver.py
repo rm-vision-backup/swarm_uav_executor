@@ -8,7 +8,7 @@ from geometry_msgs.msg import PoseStamped
 from swarm_uav_executor.drivers.ego_swarm import (EgoSwarmDriver,
                                                   _default_neighbor_odom_topics)
 from swarm_uav_executor.models import HoldGoal, MotionGoal, MotionResult
-from mavros_msgs.msg import State as MavrosState
+from mavros_msgs.msg import PositionTarget, State as MavrosState
 
 
 class FakeTime:
@@ -166,7 +166,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
                                  formation_offsets={"A02": (1.0, 2.0, 0.0)})
         self._emit_pose(driver, 0.0, 0.0, 12.0)
         self._emit_leader_odom(driver, 10.0, 0.0, 12.0)
-        goal = MotionGoal(0, 0, 12, 0, command="FOLLOW_ROUTE", leader_id="A02",
+        goal = MotionGoal(0, 0, 12, 1.25, command="FOLLOW_ROUTE", leader_id="A02",
                           formation_follow=True, layer_z=12.0)
         event = threading.Event()
         result_holder = {}
@@ -180,10 +180,23 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual(result_holder["result"].error_code, "COMMAND_HELD")
         msgs = driver._setpoint_pub.msgs
         self.assertGreaterEqual(len(msgs), 1)
-        # target = leader(10,0,12) + offset(1,2,0) = (11,2,12); P=1 -> vel=(11,2,0),
-        # setpoint = own + vel*0.1 = (1.1, 0.2, 12.0)
-        self.assertAlmostEqual(msgs[0].pose.position.x, 1.1, delta=0.02)
-        self.assertAlmostEqual(msgs[0].pose.position.y, 0.2, delta=0.02)
+        # PositionTarget 契约：position=leader+offset，velocity=PI 输出，yaw=目标航向。
+        self.assertEqual(driver._follower_setpoint_topic, "/setpoint/follower")
+        self.assertEqual(msgs[0].coordinate_frame, PositionTarget.FRAME_LOCAL_NED)
+        self.assertEqual(msgs[0].type_mask, PositionTarget.IGNORE_AFX |
+                         PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ |
+                         PositionTarget.IGNORE_YAW_RATE)
+        # target = leader(10,0,12) + offset(1,2,0) = (11,2,12)
+        self.assertAlmostEqual(msgs[0].position.x, 11.0, delta=0.02)
+        self.assertAlmostEqual(msgs[0].position.y, 2.0, delta=0.02)
+        self.assertAlmostEqual(msgs[0].position.z, 12.0, delta=0.02)
+        # P=1 -> velocity = (11,2,0)（显式速度，不再是一步位置积分）
+        self.assertAlmostEqual(msgs[0].velocity.x, 11.0, delta=0.2)
+        self.assertAlmostEqual(msgs[0].velocity.y, 2.0, delta=0.2)
+        self.assertAlmostEqual(msgs[0].yaw, 1.25, delta=1e-6)
+        # 进入 follower 先置 true（init 已置 false），退出 finally 置 false。
+        self.assertTrue(any(m.data for m in driver._direct_control_pub.msgs[:-1]))
+        self.assertFalse(driver._direct_control_pub.msgs[-1].data)
 
     def test_follower_pi_clamped(self):
         driver, _ = self._driver(follower_p_gain=1.0, follower_i_gain=0.0,
@@ -204,9 +217,12 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual(result_holder["result"].error_code, "COMMAND_HELD")
         msgs = driver._setpoint_pub.msgs
         self.assertGreaterEqual(len(msgs), 1)
-        # clamp_xy=0.5 -> setpoint.x step = 0.5*0.1 = 0.05 (unclamped would be 1.0)
-        self.assertLessEqual(msgs[0].pose.position.x, 0.5)
-        self.assertAlmostEqual(msgs[0].pose.position.x, 0.05, delta=0.02)
+        # position 仍是 leader+offset 权威目标；velocity 被 xy 限幅到 0.5。
+        self.assertAlmostEqual(msgs[0].position.x, 10.0, delta=0.02)
+        self.assertAlmostEqual(msgs[0].position.z, 12.0, delta=0.02)
+        self.assertLessEqual(msgs[0].velocity.x, 0.5 + 1e-6)
+        self.assertAlmostEqual(msgs[0].velocity.x, 0.5 * (11.0 / math.hypot(11.0, 2.0)),
+                               delta=0.02)
 
     def test_follower_leader_lost(self):
         driver, _ = self._driver()

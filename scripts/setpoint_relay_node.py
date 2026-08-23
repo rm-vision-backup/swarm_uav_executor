@@ -1,53 +1,68 @@
 #!/usr/bin/env python3
-"""把 ego 层 /setpoint 转发为 MAVROS 期望的 /mavros/setpoint_position/local。
+"""setpoint_relay：/mavros/setpoint_raw/local 的唯一 MAVROS setpoint 发布者。
 
-EgoSwarmDriver 与 ego_planner_driver 把本机位置 setpoint 发布在
-`/setpoint`（geometry_msgs/PoseStamped），而本机 MAVROS 的
-`setpoint_position` 插件订阅 `/mavros/setpoint_position/local`（同类型）。
-本中继节点把两者桥接：
+EGO 轨迹（/setpoint/ego）与 follower PI（/setpoint/follower）只发布
+PositionTarget 候选；本节点仲裁、校验、失效 HOLD，并以固定频率独占输出：
 
-    /setpoint  -->  /mavros/setpoint_position/local
+    /setpoint/ego        (PositionTarget, EGO mask 2048 / 2552)
+    /setpoint/follower   (PositionTarget, follower mask 2496)
+    /direct_control_active (Bool: false=EGO, true=follower)
+    /mavros/local_position/pose (安全 HOLD 捕获源)
+        -->  /mavros/setpoint_raw/local (PositionTarget, 30 Hz 唯一发布者)
 
-在机载多 Master 隔离仿真中，MAVROS 与 ego/executor 运行在同一机载
-Master，本节点直接订阅/发布即可；跨 Master 的机间转发（leader odom /
-intent）由 topology bridge 处理，不需要本节点参与。
+选源规则：
+- 模式切换递增 generation 并作废新选中源旧缓存，收到切换后新候选前持续 HOLD；
+- 选中源过期或含 NaN/Inf 进入 HOLD；不自动回退未选中源；
+- HOLD 锁存一次 fresh local pose 的固定 position/yaw；pose stale 时复用上一个
+  已验证 HOLD，不生成 (0,0,0)。
 
-默认话题可经私有参数覆盖：
-  ~source_topic  (默认 /setpoint)
-  ~target_topic  (默认 /mavros/setpoint_position/local)
+业务字段按 ROS ENU 填写，MAVROS setpoint_raw 插件完成 ENU→NED 转换；
+本节点不做坐标换轴。
 """
 
 from __future__ import annotations
 
 import rospy
 from geometry_msgs.msg import PoseStamped
+from mavros_msgs.msg import PositionTarget
+from std_msgs.msg import Bool
 
-
-def _handle(source: str, target: str) -> None:
-    pub = rospy.Publisher(target, PoseStamped, queue_size=1)
-
-    def on_setpoint(msg):
-        out = PoseStamped()
-        out.header = msg.header
-        out.pose = msg.pose
-        pub.publish(out)
-
-    rospy.Subscriber(source, PoseStamped, on_setpoint, queue_size=1)
-    rospy.loginfo(
-        "setpoint_relay: %s -> %s",
-        source,
-        target,
-    )
+from swarm_uav_executor.setpoint_relay import SetpointRelay
 
 
 def main() -> None:
     rospy.init_node("setpoint_relay")
-    source = rospy.get_param("~source_topic", "/setpoint")
-    target = rospy.get_param(
-        "~target_topic", "/mavros/setpoint_position/local"
-    )
-    _handle(source, target)
-    rospy.spin()
+    ego_topic = rospy.get_param("~ego_topic", "/setpoint/ego")
+    follower_topic = rospy.get_param("~follower_topic", "/setpoint/follower")
+    mode_topic = rospy.get_param("~mode_topic", "/direct_control_active")
+    pose_topic = rospy.get_param("~local_pose_topic", "/mavros/local_position/pose")
+    output_topic = rospy.get_param("~output_topic", "/mavros/setpoint_raw/local")
+    rate_hz = rospy.get_param("~rate_hz", 30.0)
+    candidate_timeout_s = rospy.get_param("~candidate_timeout_s", 0.2)
+    local_pose_timeout_s = rospy.get_param("~local_pose_timeout_s", 1.0)
+
+    relay = SetpointRelay(candidate_timeout_s, local_pose_timeout_s)
+    pub = rospy.Publisher(output_topic, PositionTarget, queue_size=1)
+
+    rospy.Subscriber(ego_topic, PositionTarget,
+                     lambda msg: relay.on_candidate("ego", msg), queue_size=1)
+    rospy.Subscriber(follower_topic, PositionTarget,
+                     lambda msg: relay.on_candidate("follower", msg), queue_size=1)
+    rospy.Subscriber(mode_topic, Bool,
+                     lambda msg: relay.on_mode(bool(msg.data)), queue_size=1)
+    rospy.Subscriber(pose_topic, PoseStamped, relay.on_pose, queue_size=1)
+
+    rospy.loginfo(
+        "setpoint_relay: sole owner of %s (rate=%s Hz, candidate_timeout=%s s, "
+        "pose_timeout=%s s)", output_topic, rate_hz, candidate_timeout_s,
+        local_pose_timeout_s)
+
+    rate = rospy.Rate(rate_hz)
+    while not rospy.is_shutdown():
+        out = relay.tick(stamp=rospy.Time.now())
+        if out is not None:
+            pub.publish(out)
+        rate.sleep()
 
 
 if __name__ == "__main__":

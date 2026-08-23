@@ -35,6 +35,8 @@ ego_swarm:
   layer_fault_exit: 8.0
   layer_tolerance_m: 0.5
   waypoint_densify_spacing: 0.4
+  # follower PI 候选话题（PositionTarget mask 2496），relay 仲裁的唯一输入之一
+  follower_setpoint_topic: /setpoint/follower
 mavros_position:
   namespace: /mavros
   frame_id: map

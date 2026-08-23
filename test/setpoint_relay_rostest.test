@@ -1,0 +1,7 @@
+<launch>
+  <!-- relay 独占 /mavros/setpoint_raw/local；测试节点发布 fake pose/两候选源并收集输出 -->
+  <node pkg="swarm_uav_executor" type="setpoint_relay_node.py"
+        name="setpoint_relay" output="screen" />
+  <test test-name="setpoint_relay_ros" pkg="swarm_uav_executor"
+        type="test_setpoint_relay_ros.py" time-limit="20" />
+</launch>

@@ -13,6 +13,24 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - 垂直段与 follower PI 对邻机实施 1.0 m 水平、2.0 m 垂直中心距运行时门禁，突破门槛返回失败并触发整批 HOLD。
 - 坐标系、yaw 约定、阈值、A01-A15 映射及 MAVROS namespace 未经现场冻结前，只允许 mock、SITL 或不上桨验证。
 
+## setpoint_relay（MAVROS setpoint 唯一出口）
+
+- EGO 轨迹发布 `/setpoint/ego`（`mavros_msgs/PositionTarget`，mask 2048），follower PI 发布
+  `/setpoint/follower`（mask 2496）；两者都只是候选，不直接接触 MAVROS 输出话题。
+- `setpoint_relay_node.py` 订阅 `/setpoint/ego`、`/setpoint/follower`、`/direct_control_active`
+  与 `/mavros/local_position/pose`，以固定频率（默认 30 Hz）独占发布
+  `/mavros/setpoint_raw/local`（PositionTarget）。
+- 选源：`direct_control_active=false` 选 EGO、`true` 选 follower；模式切换递增 generation 并作废
+  新选中源旧缓存，收到切换后新候选前持续 HOLD。
+- 校验：frame 必须 `FRAME_LOCAL_NED`、mask 必须属于契约、启用字段必须 finite；选中源过期或
+  无效立即进入固定 position/yaw HOLD，不自动回退未选中源。
+- HOLD：从 fresh local pose 锁存一次固定 position/yaw；pose stale 时复用上个已验证 HOLD，
+  不生成 (0,0,0)。业务字段按 ROS ENU 填写，MAVROS 完成 ENU→NED。
+- **禁止**任何其他节点在 EGO 运行链路上发布 `/mavros/setpoint_raw/local` 或
+  `/mavros/setpoint_position/local`；`safe_valley_exp` 的 `flock_comm.py`/`safe_flock_*` 与
+  `mavros_position` 兼容 driver 属独立 legacy/兼容场景，不得与 EGO launch 同时启动。
+- 仲裁逻辑为纯类 `swarm_uav_executor.setpoint_relay.SetpointRelay`（无 ROS 依赖，可单测）。
+
 ## 构建与测试
 
 ```bash
