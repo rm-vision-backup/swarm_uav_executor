@@ -34,7 +34,7 @@
     <param name="lambda_swarm" value="1.0" />
     <param name="lambda_smooth" value="1.0" />
     <param name="planning_horizon" value="5.0" />
-    <param name="replan_period_s" value="1.0" />
+    <param name="replan_period_s" value="4.0" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
