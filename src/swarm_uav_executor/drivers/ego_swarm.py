@@ -73,7 +73,7 @@ class EgoSwarmDriver(MotionDriver):
                   px4_params=None,
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
-                  waypoint_densify_spacing=2.0):
+                  waypoint_densify_spacing=0.4):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -291,6 +291,11 @@ class EgoSwarmDriver(MotionDriver):
     def _build_layered_keypoints(self, goal, start):
         """Build command-specific layered keypoints (vertical/horizontal/vertical).
 
+        `start` (current ENU pose, read once before dispatch while HOLD) is
+        included as the first keypoint so the vertical climb/drop segments get
+        intermediate points after densification — without it the B-spline
+        smooths the whole climb into a slanted segment.
+
         Returns [] when the goal is already reachable on the target layer or
         the command has no layering semantics (HOVER).
         """
@@ -306,7 +311,7 @@ class EgoSwarmDriver(MotionDriver):
             layer = self._layer_follow_route
         else:
             return []
-        points = []
+        points = [start]
         if abs(sz - layer) > self._layer_tolerance_m:
             points.append((sx, sy, layer))
         if goal.command == "FOLLOW_ROUTE" and goal.waypoints:
@@ -569,7 +574,7 @@ class EgoSwarmDriver(MotionDriver):
             layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
             layer_tolerance_m=rospy.get_param("~ego_swarm/layer_tolerance_m", 0.5),
             waypoint_densify_spacing=rospy.get_param(
-                "~ego_swarm/waypoint_densify_spacing", 2.0),
+                "~ego_swarm/waypoint_densify_spacing", 0.4),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),
             mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
             origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),

@@ -242,20 +242,22 @@ class EgoSwarmDriverTest(unittest.TestCase):
         driver, _ = self._driver()
         goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
+        # 序列含 start：(0,0,5) -> 垂直 15m -> 水平目标上方 -> 垂直降 12m
         self.assertEqual(keypoints,
-                         [(0.0, 0.0, 15.0), (50.0, -17.5, 15.0), (50.0, -17.5, 12.0)])
+                         [(0.0, 0.0, 5.0), (0.0, 0.0, 15.0), (50.0, -17.5, 15.0),
+                          (50.0, -17.5, 12.0)])
 
     def test_move_to_skips_vertical_when_already_on_layer(self):
         driver, _ = self._driver()
         goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 15.0))
-        self.assertEqual(keypoints, [(50.0, -17.5, 15.0), (50.0, -17.5, 12.0)])
+        self.assertEqual(keypoints, [(0.0, 0.0, 15.0), (50.0, -17.5, 15.0), (50.0, -17.5, 12.0)])
 
     def test_fault_exit_layers_at_8m(self):
         driver, _ = self._driver()
         goal = MotionGoal(10.0, 0.0, 8.0, 0, command="FAULT_EXIT")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 15.0))
-        self.assertEqual(keypoints, [(0.0, 0.0, 8.0), (10.0, 0.0, 8.0)])
+        self.assertEqual(keypoints, [(0.0, 0.0, 15.0), (0.0, 0.0, 8.0), (10.0, 0.0, 8.0)])
 
     def test_follow_route_leader_layers_at_12m(self):
         driver, _ = self._driver()
@@ -263,8 +265,8 @@ class EgoSwarmDriverTest(unittest.TestCase):
                           waypoints=((1, 0, 5, 0), (2, 0, 10, 0), (3, 0, 12, 0)))
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
         self.assertEqual(keypoints,
-                         [(0.0, 0.0, 12.0), (1.0, 0.0, 12.0), (2.0, 0.0, 12.0),
-                          (3.0, 0.0, 12.0)])
+                         [(0.0, 0.0, 5.0), (0.0, 0.0, 12.0), (1.0, 0.0, 12.0),
+                          (2.0, 0.0, 12.0), (3.0, 0.0, 12.0)])
 
     def test_hover_returns_empty_keypoints(self):
         driver, _ = self._driver()
@@ -284,13 +286,13 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self._emit_pose(driver, 0.0, 0.0, 5.0)
         goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
-        dense = driver._densify_waypoints(keypoints, 2.0)
+        dense = driver._densify_waypoints(keypoints, 0.4)
         driver._publish_waypoints_from_list(dense)
         msgs = driver._waypoints_pub.msgs
         self.assertEqual(len(msgs), 1)
         pts = msgs[0].polygon.points
-        self.assertGreaterEqual(len(pts), 30)  # 50m/2m≈25 + 垂直段
-        self.assertEqual((pts[0].x, pts[0].y, pts[0].z), (0.0, 0.0, 15.0))
+        self.assertGreaterEqual(len(pts), 100)  # ~(10+53+3)m / 0.4m
+        self.assertEqual((pts[0].x, pts[0].y, pts[0].z), (0.0, 0.0, 5.0))  # start 首点
         self.assertAlmostEqual(pts[-1].x, 50.0)
         self.assertAlmostEqual(pts[-1].z, 12.0)
 

@@ -69,7 +69,7 @@
     <param name="ego_swarm/layer_follow_route" value="12.0" />
     <param name="ego_swarm/layer_fault_exit" value="8.0" />
     <param name="ego_swarm/layer_tolerance_m" value="0.5" />
-    <param name="ego_swarm/waypoint_densify_spacing" value="2.0" />
+    <param name="ego_swarm/waypoint_densify_spacing" value="0.4" />
     <!-- No-RC SITL policy is explicit and must not be enabled by real-vehicle defaults. -->
     <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" />
     <param name="ego_swarm/px4_param_set_timeout_s" value="5.0" />
