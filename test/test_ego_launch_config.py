@@ -34,6 +34,22 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("ego_swarm/neighbor_intents"),
                          "$(arg neighbor_intents)")
 
+    def test_predictive_supervisor_is_shadow_and_logs_in_workspace(self):
+        args = {item.attrib["name"]: item.attrib.get("default")
+                for item in self.root.findall("arg")}
+        self.assertEqual(args.get("safety_supervisor_mode"), "shadow")
+        self.assertTrue(args.get("diagnostic_log_dir", "").endswith(
+            "/runtime_logs/ego_planner"))
+        planner = next(node for node in self.root.findall("node")
+                       if node.attrib.get("name") == "ego_planner_driver")
+        params = {item.attrib["name"]: item.attrib.get("value")
+                  for item in planner.findall("param")}
+        self.assertEqual(params.get("safety_supervisor_mode"),
+                         "$(arg safety_supervisor_mode)")
+        self.assertEqual(params.get("neighbor_stale_policy"), "diagnose_only")
+        self.assertEqual(params.get("neighbor_missing_policy"),
+                         "continue_after_barrier")
+
 
 if __name__ == "__main__":
     unittest.main()

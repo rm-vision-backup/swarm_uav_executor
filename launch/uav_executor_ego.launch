@@ -17,6 +17,10 @@
   <!-- 长任务（15 分钟级覆盖航线）需延长 terminal exec_state 等待窗口；
        默认 200s 保持原行为，长航线启动时经 uav_offboard_ego.launch 覆盖。 -->
   <arg name="ego_state_timeout_s" default="200.0" />
+  <!-- Predictive safety stage A defaults to observation only. -->
+  <arg name="safety_supervisor_mode" default="shadow" />
+  <arg name="diagnostic_log_dir"
+       default="/home/ub20tg/catkin_swarm6-2/runtime_logs/ego_planner" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the
        Python EgoSwarmDriver and topology bridge can discover them. -->
@@ -43,6 +47,26 @@
     <param name="planning_horizon" value="5.0" />
     <param name="replan_period_s" value="1.0" />
     <param name="no_replan_thresh_m" value="1.0" />
+    <param name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
+    <param name="safety_supervisor_rate_hz" value="25.0" />
+    <param name="safety_prediction_horizon_s" value="5.0" />
+    <param name="safety_sample_period_s" value="0.05" />
+    <param name="protected_distance_m" value="1.0" />
+    <param name="safety_control_delay_s" value="0.20" />
+    <param name="safety_compute_budget_s" value="0.05" />
+    <param name="peer_data_age_cap_s" value="2.0" />
+    <param name="emergency_decel_mps2" value="2.0" />
+    <param name="warning_buffer_m" value="0.35" />
+    <param name="emergency_buffer_m" value="0.10" />
+    <param name="warning_ttc_s" value="3.0" />
+    <param name="emergency_ttc_s" value="1.5" />
+    <param name="minimum_prediction_window_s" value="0.25" />
+    <param name="safety_episode_release_s" value="1.0" />
+    <param name="neighbor_stale_policy" value="diagnose_only" />
+    <param name="neighbor_intent_stale_s" value="2.0" />
+    <param name="neighbor_missing_policy" value="continue_after_barrier" />
+    <param name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
+    <param name="diagnostic_log_queue_size" value="2048" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->

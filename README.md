@@ -10,6 +10,9 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - `mavros_position` 只连接配置的本机 MAVROS namespace，持续发布本地位置 setpoint。
 - 正式 `ego_swarm` driver 是本机 arm/OFFBOARD 的唯一软件所有者：仅未 arm 的 `MOVE_TO` 在 START 后按需 arm，完成 5 m 垂直检查点并稳定 2 s；已 arm 飞机跳过该过程。`mavros_position` 兼容 driver 仍不自动 arm。
 - `MOVE_TO`、`FOLLOW_ROUTE`、`FAULT_EXIT` 分别使用 15/12/8 m 动作层；严格垂直段冻结 x/y/yaw，其他非 follower 航段使用 EGO，followers 使用 PI+编队偏置。
+- EGO launch 默认启用 25 Hz `safety_supervisor_mode=shadow`：预测结果写入工作区
+  `runtime_logs/ego_planner/UAVn-ego-planner.log`，不改变飞行行为。阶段 B active 制动接通前不得
+  把 shadow 视为主动安全闭环。
 - 垂直段与 follower PI 对邻机实施 1.0 m 水平、2.0 m 垂直中心距运行时门禁，突破门槛返回失败并触发整批 HOLD。
 - 坐标系、yaw 约定、阈值、A01-A15 映射及 MAVROS namespace 未经现场冻结前，只允许 mock、SITL 或不上桨验证。
 
