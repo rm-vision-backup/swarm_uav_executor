@@ -393,6 +393,23 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(len(driver._hold_pub.msgs), 0)
 
+    def test_brake_hold_is_terminal_failure_after_braking_state(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        result_holder = {}
+        def runner():
+            result_holder["result"] = driver.start_move_to(
+                MotionGoal(10, 0, 12, 0), threading.Event(), time.monotonic() + 2.0)
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        push_later(driver, "EMERGENCY_BRAKE", 0.05)
+        push_later(driver, "BRAKE_HOLD", 0.10)
+        thread.join(1.5)
+        result = result_holder.get("result")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "BRAKE_HOLD")
+
 
 if __name__ == "__main__":
     unittest.main()
