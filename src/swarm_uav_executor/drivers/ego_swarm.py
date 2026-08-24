@@ -84,7 +84,7 @@ class EgoSwarmDriver(MotionDriver):
                   px4_params=None,
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
-                  waypoint_densify_spacing=0.4,
+                  waypoint_densify_spacing=2.0,
                   follower_setpoint_topic="/setpoint/follower"):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
@@ -389,6 +389,16 @@ class EgoSwarmDriver(MotionDriver):
                 return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
             if base_state is not None and self._monotonic_clock() >= base_state + self.state_timeout_s:
                 return MotionResult(False, "DRIVER_TIMEOUT", "no terminal exec_state within timeout")
+            # 执行层运行时距离门禁（min-snap 重构）：EGO 巡航期间邻机过近
+            # （水平 < min_horizontal_distance_m 且垂直 < min_vertical_distance_m）
+            # -> 本机 HOLD 暂停，任务以 FAILED/MIN_DISTANCE_BREACH 收口（避碰
+            # 失败兜底，不自动恢复）。复用 _distance_safe（follower 同款逻辑）。
+            with self._lock:
+                own_pose = self._last_pose
+            if own_pose is not None and not self._distance_safe(own_pose):
+                self._issue_hold()
+                return MotionResult(False, "MIN_DISTANCE_BREACH",
+                                    "neighbor distance breached during ego cruise")
             with self._lock:
                 state = self._last_cmd_reply
             if state is None:
@@ -408,9 +418,11 @@ class EgoSwarmDriver(MotionDriver):
             self._last_cmd_reply = None
             self._run_start_mono_s = self._monotonic_clock()
         self._goal_yaw_pub.publish(Float64(goal.yaw))
-        # 方案 B：非 follower 自主动作先构造含动作分层的关键点序列并按最大
-        # waypoint_densify_spacing（2m）均匀密化，作为 waypoints 发布给 C++；
-        # C++ 负责 planning_horizon 滚动局部规划。HOVER 保持原有冻结语义。
+        # 方案 B 重构（min-snap）：非 follower 自主动作先构造含动作分层的关键点序列
+        # 并按最大 waypoint_densify_spacing（2m）均匀密化，作为 waypoints 发布给 C++；
+        # 2m 密化点只用于 C++ 窗口推进（advanceConsumed）/末点参考，不进 B-spline——
+        # B-spline 初始 point_set 由 C++ 侧 min-snap 单段多项式按 0.4m 弧长等距采样生成。
+        # HOVER 保持原有冻结语义。
         if goal.command in ("MOVE_TO", "FAULT_EXIT") or (
                 goal.command == "FOLLOW_ROUTE" and not goal.formation_follow):
             start = self._last_position_enu()
@@ -599,7 +611,7 @@ class EgoSwarmDriver(MotionDriver):
             layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
             layer_tolerance_m=rospy.get_param("~ego_swarm/layer_tolerance_m", 0.5),
             waypoint_densify_spacing=rospy.get_param(
-                "~ego_swarm/waypoint_densify_spacing", 0.4),
+                "~ego_swarm/waypoint_densify_spacing", 2.0),
             follower_setpoint_topic=rospy.get_param(
                 "~ego_swarm/follower_setpoint_topic", "/setpoint/follower"),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),

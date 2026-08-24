@@ -27,14 +27,15 @@ ego_swarm:
   follower_i_gain: 0.1
   follower_limit_xy: 2.0
   follower_limit_z: 1.0
-  # 方案 B：命令分层高度（MOVE_TO 15m / FOLLOW_ROUTE 12m / FAULT_EXIT 8m）
-  # 与航点密化最大间距：上层生成含动作分层关键点（含当前位置 start）并
-  # 0.4m 均匀密化后发布 waypoints（对齐原版 ego-planner-swarm 控制点间距 0.4m）
+  # 方案 B（min-snap 重构）：命令分层高度（MOVE_TO 15m / FOLLOW_ROUTE 12m / FAULT_EXIT 8m）
+  # 与航点密化最大间距：上层生成含动作分层关键点（含当前位置 start）并按最大
+  # 2m 间距密化后发布 waypoints（仅作 C++ 窗口推进/末点参考，不进 B-spline；
+  # B-spline 初始 point_set 由 C++ min-snap 单段按 0.4m 弧长等距采样生成）
   layer_move_to: 15.0
   layer_follow_route: 12.0
   layer_fault_exit: 8.0
   layer_tolerance_m: 0.5
-  waypoint_densify_spacing: 0.4
+  waypoint_densify_spacing: 2.0
   # follower PI 候选话题（PositionTarget mask 2496），relay 仲裁的唯一输入之一
   follower_setpoint_topic: /setpoint/follower
 mavros_position:

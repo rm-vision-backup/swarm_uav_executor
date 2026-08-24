@@ -302,15 +302,77 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self._emit_pose(driver, 0.0, 0.0, 5.0)
         goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
-        dense = driver._densify_waypoints(keypoints, 0.4)
+        dense = driver._densify_waypoints(keypoints, 2.0)
         driver._publish_waypoints_from_list(dense)
         msgs = driver._waypoints_pub.msgs
         self.assertEqual(len(msgs), 1)
         pts = msgs[0].polygon.points
-        self.assertGreaterEqual(len(pts), 100)  # ~(10+53+3)m / 0.4m
+        # ~(10+53+3)m / 2m 间距 -> 约 35 点（2m 密化仅作 C++ 窗口推进/末点参考）
+        self.assertGreaterEqual(len(pts), 30)
+        self.assertLessEqual(len(pts), 60)
         self.assertEqual((pts[0].x, pts[0].y, pts[0].z), (0.0, 0.0, 5.0))  # start 首点
         self.assertAlmostEqual(pts[-1].x, 50.0)
         self.assertAlmostEqual(pts[-1].z, 12.0)
+        # 相邻点距不超过 2m（2m 密化约束）。
+        distances = [math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
+                     for a, b in zip(pts, pts[1:])]
+        self.assertLessEqual(max(distances), 2.0 + 1e-9)
+
+    # ---- min-snap 重构：执行层 EGO 巡航距离门禁 ----
+
+    def test_ego_cruise_distance_gate_triggers_hold(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        # 注入邻机 odom 过近：水平 0.5m < 1.0m 且垂直 0.1m < 2.0m。
+        from nav_msgs.msg import Odometry
+        odom = Odometry()
+        odom.pose.pose.position.x = 0.5
+        odom.pose.pose.position.y = 0.0
+        odom.pose.pose.position.z = 12.1
+        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+        goal = MotionGoal(10, 0, 12, 0)
+        result_holder = {}
+        def runner():
+            result_holder["result"] = driver.start_move_to(
+                goal, threading.Event(), time.monotonic() + 2.0)
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join(1.5)
+        result = result_holder.get("result")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "MIN_DISTANCE_BREACH")
+        # 本机 HOLD 已发出（_issue_hold -> /hold），暂停不自动恢复。
+        self.assertGreaterEqual(len(driver._hold_pub.msgs), 1)
+
+    def test_ego_cruise_distance_gate_ignores_far_neighbor(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        # 邻机足够远：水平 5m >= 1.0m -> 门禁不触发。
+        from nav_msgs.msg import Odometry
+        odom = Odometry()
+        odom.pose.pose.position.x = 5.0
+        odom.pose.pose.position.y = 0.0
+        odom.pose.pose.position.z = 12.1
+        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+        goal = MotionGoal(10, 0, 12, 0)
+        result_holder = {}
+        def runner():
+            result_holder["result"] = driver.start_move_to(
+                goal, threading.Event(), time.monotonic() + 2.0)
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        def completed():
+            time.sleep(0.1)
+            class Msg:
+                def __init__(self, data): self.data = data
+            driver._on_state(Msg("COMPLETED"))
+        threading.Thread(target=completed, daemon=True).start()
+        thread.join(1.5)
+        result = result_holder.get("result")
+        self.assertIsNotNone(result)
+        self.assertTrue(result.success)
+        self.assertEqual(len(driver._hold_pub.msgs), 0)
 
 
 if __name__ == "__main__":
