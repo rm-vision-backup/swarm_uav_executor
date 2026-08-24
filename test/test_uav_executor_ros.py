@@ -3,6 +3,10 @@ import unittest, rospy, rostest
 from swarm_uav_interfaces.msg import TaskAssignment, UavTaskState
 from swarm_uav_interfaces.srv import UavTask, UavTaskRequest
 class RosTest(unittest.TestCase):
+    def test_ego_launch_keeps_rebound_opt_in(self):
+        self.assertFalse(rospy.get_param(
+            '/ego_launch_contract/ego_planner_driver/enable_rebound'))
+
     def test_service_and_terminal_topic(self):
         messages=[]; subscriber=rospy.Subscriber('/UAV1/uav_task_state',UavTaskState,messages.append)
         rospy.wait_for_service('/UAV1/uav_task',5); proxy=rospy.ServiceProxy('/UAV1/uav_task',UavTask)

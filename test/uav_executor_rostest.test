@@ -2,5 +2,16 @@
   <include file="$(find swarm_uav_executor)/launch/uav_executor_mock.launch">
     <arg name="uav_id" value="A01"/><arg name="exec_target" value="UAV1"/><arg name="result_delay_s" value="0.1"/>
   </include>
+  <!-- Expand the production EGO launch alongside the isolated mock executor so
+       rostest verifies safety-sensitive args reach the runtime parameter tree. -->
+  <group ns="ego_launch_contract">
+    <include file="$(find swarm_uav_executor)/launch/uav_executor_ego.launch">
+      <arg name="uav_id" value="ATEST"/>
+      <arg name="exec_target" value="UAVTEST"/>
+      <arg name="service_namespace" value="UAVTEST"/>
+      <arg name="state_topic" value="/UAVTEST/uav_task_state"/>
+      <arg name="enable_rebound" value="false"/>
+    </include>
+  </group>
   <test test-name="uav_executor_ros" pkg="swarm_uav_executor" type="test_uav_executor_ros.py" time-limit="15" />
 </launch>

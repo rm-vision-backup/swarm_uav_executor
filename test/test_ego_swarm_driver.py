@@ -5,6 +5,7 @@ import time
 import unittest
 
 from geometry_msgs.msg import PoseStamped
+from swarm_uav_interfaces.msg import UavTrajectoryIntent
 from swarm_uav_executor.drivers.ego_swarm import (EgoSwarmDriver,
                                                   _default_neighbor_odom_topics)
 from swarm_uav_executor.models import HoldGoal, MotionGoal, MotionResult
@@ -31,9 +32,14 @@ class FakeRos:
     def __init__(self, ready_param=False):
         self.sleep_calls = 0
         self._ready = ready_param
+        self.subscribers = []
 
     def Publisher(self, _t, _m, queue_size=1): return FakePub()
-    def Subscriber(self, _t, _m, cb, queue_size=1): return FakeSub(_t, _m, cb, queue_size)
+    def Subscriber(self, _t, _m, cb, queue_size=1, **kwargs):
+        sub = FakeSub(_t, _m, cb, queue_size)
+        sub.topic = _t
+        self.subscribers.append(sub)
+        return sub
     def get_param(self, name, default=None):
         if name.endswith("/uav_id"):
             return "A01" if self._ready else None
@@ -118,6 +124,19 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual(len(topics), 14)
         self.assertNotIn("/UAV7/mavros/local_position/odom", topics)
         self.assertIn("/UAV15/mavros/local_position/odom", topics)
+
+    def test_neighbor_intents_are_split_and_forwarded_to_cpp_input(self):
+        driver, ros = self._driver(
+            neighbor_intents=" /UAV2/trajectory_intent,/UAV15/trajectory_intent ")
+        topics = [sub.topic for sub in ros.subscribers]
+        self.assertIn("/UAV2/trajectory_intent", topics)
+        self.assertIn("/UAV15/trajectory_intent", topics)
+        self.assertEqual(len(driver._neighbor_subs), 2)
+
+        msg = UavTrajectoryIntent()
+        msg.uav_id = "UAV15"
+        driver._on_neighbor_intent(msg)
+        self.assertIs(driver._neighbor_intent_pub.msgs[-1], msg)
 
     def test_plan_failed_returns_error(self):
         driver, _ = self._driver()
