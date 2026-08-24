@@ -12,6 +12,9 @@
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
   <arg name="configure_px4_params" default="false" />
+  <!-- 长任务（15 分钟级覆盖航线）需延长 terminal exec_state 等待窗口；
+       默认 200s 保持原行为，长航线启动时经 uav_offboard_ego.launch 覆盖。 -->
+  <arg name="ego_state_timeout_s" default="200.0" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the
        Python EgoSwarmDriver and topology bridge can discover them. -->
@@ -74,6 +77,7 @@
     <param name="require_explicit_start" value="true" />
     <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
     <param name="ego_swarm/namespace" value="" />
+    <param name="ego_swarm/state_timeout_s" value="$(arg ego_state_timeout_s)" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
     <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
     <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
