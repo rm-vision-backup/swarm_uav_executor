@@ -49,6 +49,7 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("neighbor_stale_policy"), "diagnose_only")
         self.assertEqual(params.get("neighbor_missing_policy"),
                          "continue_after_barrier")
+        self.assertEqual(params.get("intent_negotiation_wait_s"), "1.0")
 
 
 if __name__ == "__main__":
