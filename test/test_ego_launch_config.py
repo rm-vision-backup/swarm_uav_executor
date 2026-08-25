@@ -57,8 +57,8 @@ class EgoLaunchConfigTest(unittest.TestCase):
     def test_state_transition_timeout_decoupled_from_execution_timeout(self):
         args = {item.attrib["name"]: item.attrib.get("default")
                 for item in self.root.findall("arg")}
-        self.assertEqual(args.get("ego_state_timeout_s"), "200.0")
-        self.assertEqual(args.get("ego_state_transition_timeout_s"), "2.0")
+        self.assertEqual(args.get("uav_task_timeout_s"), "200.0")
+        self.assertEqual(args.get("ego_state_timeout_s"), "2.0")
         executor = next(node for node in self.root.findall("node")
                         if node.attrib.get("type") == "uav_executor_node.py")
         params = {item.attrib["name"]: item.attrib.get("value")
@@ -66,9 +66,9 @@ class EgoLaunchConfigTest(unittest.TestCase):
         # 任务执行超时（DRIVER_TIMEOUT 兜底）与 ego 状态切换超时（HOLD 确认）
         # 各自独立上层输入，互不引用。
         self.assertEqual(params.get("ego_swarm/state_timeout_s"),
-                         "$(arg ego_state_timeout_s)")
+                         "$(arg uav_task_timeout_s)")
         self.assertEqual(params.get("shutdown_hold_timeout_s"),
-                         "$(arg ego_state_transition_timeout_s)")
+                         "$(arg ego_state_timeout_s)")
 
 
 if __name__ == "__main__":

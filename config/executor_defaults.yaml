@@ -4,7 +4,7 @@ store_max_records: 1024
 terminal_republish_count: 3
 terminal_republish_interval_s: 0.2
 # 本机 ego 状态切换/收口超时（HOLD 确认、shutdown join），与任务执行超时
-# ego_swarm.state_timeout_s(200s) 完全独立；launch 层用 ego_state_transition_timeout_s 覆盖
+# ego_swarm.state_timeout_s(200s) 完全独立；launch 层用 ego_state_timeout_s 覆盖
 shutdown_hold_timeout_s: 2.0
 mock:
   result_delay_s: 0.5
