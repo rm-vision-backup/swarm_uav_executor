@@ -50,6 +50,9 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("neighbor_missing_policy"),
                          "continue_after_barrier")
         self.assertEqual(params.get("intent_negotiation_wait_s"), "1.0")
+        self.assertEqual(params.get("enable_yield_candidates"), "true")
+        self.assertEqual(params.get("yield_max_velocity_mps"), "1.5")
+        self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
 
 
 if __name__ == "__main__":
