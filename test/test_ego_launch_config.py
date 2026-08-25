@@ -49,9 +49,12 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("neighbor_stale_policy"), "diagnose_only")
         self.assertEqual(params.get("neighbor_missing_policy"),
                          "continue_after_barrier")
-        self.assertEqual(params.get("intent_negotiation_wait_s"), "1.0")
-        self.assertEqual(params.get("enable_yield_candidates"), "true")
-        self.assertEqual(params.get("yield_max_velocity_mps"), "1.5")
+        # L3 精简（implementation_plan_26082500）删除 yield/negotiation 参数；
+        # 26082602 新增周期碰撞检查（10Hz），替代事件驱动 replan。
+        self.assertNotIn("intent_negotiation_wait_s", params)
+        self.assertNotIn("enable_yield_candidates", params)
+        self.assertNotIn("yield_max_velocity_mps", params)
+        self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
 
     def test_state_transition_timeout_decoupled_from_execution_timeout(self):
