@@ -541,13 +541,26 @@ class EgoSwarmDriver(MotionDriver):
         return self._plan_horizontal(goal, cancel_event, deadline)
 
     def hold(self, goal: HoldGoal, deadline):
+        # Already holding (HOLD or BRAKE_HOLD after emergency braking): confirm
+        # immediately without clearing _last_cmd_reply or republishing, so a
+        # safety HOLD cannot be blocked by the confirm loop itself.
+        with self._lock:
+            state = self._last_cmd_reply
+        if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
+            return MotionResult(True, "", "egoswarm already holding")
         self._issue_hold()
-        # Synchronous confirm: wait until the node reports HOLD or a timeout.
-        end = self._monotonic_clock() + self.state_timeout_s
+        # Bounded confirm: wait at most min(caller deadline, state_timeout_s).
+        # Ignoring the caller deadline used to block for state_timeout_s (200s)
+        # when the node never confirmed, stalling the whole task entry.
+        now = self._monotonic_clock()
+        timeout_s = float(self.state_timeout_s)
+        if deadline is not None:
+            timeout_s = min(timeout_s, max(0.0, float(deadline) - now))
+        end = now + timeout_s
         while self._monotonic_clock() < end and not self._shutdown:
             with self._lock:
                 state = self._last_cmd_reply
-            if state == _STATE_HOLD:
+            if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
                 return MotionResult(True, "", "egoswarm HOLD confirmed")
             time.sleep(1.0 / _MONITOR_HZ)
         return MotionResult(False, "HOLD_TIMEOUT", "egoswarm did not confirm HOLD")

@@ -158,6 +158,36 @@ class EgoSwarmDriverTest(unittest.TestCase):
         result = driver.hold(HoldGoal("stop"), time.monotonic() + 1.0)
         self.assertTrue(result.success)
 
+    def test_hold_immediate_when_already_hold(self):
+        driver, _ = self._driver()
+        class Msg:
+            def __init__(self, data): self.data = data
+        driver._on_state(Msg("HOLD"))
+        before = driver._monotonic_clock()
+        result = driver.hold(HoldGoal("stop"), time.monotonic() + 1.0)
+        self.assertTrue(result.success)
+        # Already holding: must confirm instantly, without republishing /hold
+        # or waiting a full confirm window.
+        self.assertLess(driver._monotonic_clock() - before, 0.1)
+
+    def test_hold_confirms_brake_hold(self):
+        driver, _ = self._driver()
+        # BRAKE_HOLD (emergency braking endpoint latched) also means the
+        # aircraft is stopped, so hold() must confirm it instead of timing out.
+        push_later(driver, "BRAKE_HOLD", 0.05)
+        result = driver.hold(HoldGoal("stop"), time.monotonic() + 1.0)
+        self.assertTrue(result.success)
+
+    def test_hold_respects_caller_deadline(self):
+        driver, _ = self._driver()
+        # Expired deadline: hold() must return HOLD_TIMEOUT quickly instead of
+        # blocking for state_timeout_s (was 200s / 1.0s here) waiting forever.
+        before = driver._monotonic_clock()
+        result = driver.hold(HoldGoal("stop"), time.monotonic() - 1.0)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "HOLD_TIMEOUT")
+        self.assertLess(driver._monotonic_clock() - before, 1.0)
+
     def test_health_false_when_node_missing(self):
         driver, _ = self._driver(ready=False)
         health = driver.health()
