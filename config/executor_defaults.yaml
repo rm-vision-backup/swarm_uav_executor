@@ -3,9 +3,9 @@ store_ttl_s: 3600.0
 store_max_records: 1024
 terminal_republish_count: 3
 terminal_republish_interval_s: 0.2
-# 本机 ego 状态切换/收口超时（HOLD 确认、shutdown join），与任务执行超时
-# ego_swarm.state_timeout_s(200s) 完全独立；launch 层用 ego_state_timeout_s 覆盖
-shutdown_hold_timeout_s: 2.0
+# 本机 ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join），与任务执行超时
+# ego_swarm.task_timeout_s(200s) 完全独立；launch 层用 ego_hold_timeout_s 覆盖
+ego_hold_timeout_s: 2.0
 mock:
   result_delay_s: 0.5
   final_success: true
@@ -16,7 +16,8 @@ mock:
 ego_swarm:
   # 空 namespace = 本机无前缀话题（与 MAVROS /mavros/* 一致，机间靠 bridge 源前缀）
   namespace: ""
-  state_timeout_s: 200.0
+  # 任务执行超时（DRIVER_TIMEOUT 兜底；launch 层 uav_task_timeout_s 覆盖）
+  task_timeout_s: 200.0
   min_horizontal_distance_m: 1.0
   min_vertical_distance_m: 2.0
   position_tolerance_m: 0.2
@@ -45,6 +46,7 @@ mavros_position:
   frame_id: map
   setpoint_rate_hz: 30.0
   pose_timeout_s: 0.5
+  # MAVROS state 消息过期超时（legacy 兼容 driver，与 ego_swarm 的 task_timeout_s 语义无关）
   state_timeout_s: 1.0
   position_tolerance_m: 0.20
   yaw_tolerance_rad: 0.15

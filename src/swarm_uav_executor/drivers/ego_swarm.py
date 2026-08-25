@@ -71,7 +71,7 @@ def _default_neighbor_odom_topics(exec_target):
 class EgoSwarmDriver(MotionDriver):
     """MotionDriver over the ego_planner_driver binary via its topics."""
 
-    def __init__(self, namespace="", state_timeout_s=200.0,
+    def __init__(self, namespace="", task_timeout_s=200.0,
                  ros=rospy, monotonic_clock=time.monotonic,
                  pos_tolerance_m=0.2, steady_s=1.0,
                  pose_timeout_s=1.0, neighbor_intents='',
@@ -95,7 +95,7 @@ class EgoSwarmDriver(MotionDriver):
         # preserved for backward-compatible single-master multi-UAV setups.
         raw = str(namespace or "").strip("/")
         self.namespace = ("/" + raw) if raw else ""
-        self.state_timeout_s = float(state_timeout_s)
+        self.task_timeout_s = float(task_timeout_s)
         self.pos_tolerance_m = float(pos_tolerance_m)
         self.steady_s = float(steady_s)
         self.pose_timeout_s = float(pose_timeout_s)
@@ -390,7 +390,7 @@ class EgoSwarmDriver(MotionDriver):
                 return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
             if self._monotonic_clock() >= float(deadline):
                 return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
-            if base_state is not None and self._monotonic_clock() >= base_state + self.state_timeout_s:
+            if base_state is not None and self._monotonic_clock() >= base_state + self.task_timeout_s:
                 return MotionResult(False, "DRIVER_TIMEOUT", "no terminal exec_state within timeout")
             # 执行层运行时距离门禁（min-snap 重构）：EGO 巡航期间邻机过近
             # （水平 < min_horizontal_distance_m 且垂直 < min_vertical_distance_m）
@@ -552,7 +552,7 @@ class EgoSwarmDriver(MotionDriver):
             return MotionResult(False, "HOLD_TIMEOUT", "egoswarm hold requires a deadline")
         # State-transition confirm bound comes ONLY from the caller deadline
         # (executor passes clock() + state_transition_timeout_s, default 2s).
-        # This is intentionally independent from state_timeout_s (200s), which
+        # This is intentionally independent from task_timeout_s (200s), which
         # bounds task *execution* (DRIVER_TIMEOUT), not HOLD confirmation.
         # Contract: deadline must use the same clock as self._monotonic_clock().
         end = float(deadline)
@@ -609,7 +609,7 @@ class EgoSwarmDriver(MotionDriver):
             neighbor_odom_topics = _default_neighbor_odom_topics(exec_target)
         return cls(
             namespace=rospy.get_param("~ego_swarm/namespace", ""),
-            state_timeout_s=rospy.get_param("~ego_swarm/state_timeout_s", 200.0),
+            task_timeout_s=rospy.get_param("~ego_swarm/task_timeout_s", 200.0),
             pos_tolerance_m=rospy.get_param("~ego_swarm/position_tolerance_m", 0.2),
             steady_s=rospy.get_param("~ego_swarm/arrival_stable_s", 1.0),
             pose_timeout_s=rospy.get_param("~ego_swarm/pose_timeout_s", 1.0),

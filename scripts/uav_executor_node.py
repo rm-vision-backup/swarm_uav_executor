@@ -23,7 +23,7 @@ def load_config_from_ros_params():
         bool(rospy.get_param("~require_explicit_start", False)),
         tuple(rospy.get_param("~supported_commands", ["MOVE_TO"])), float(rospy.get_param("~store_ttl_s", 3600.0)),
         int(rospy.get_param("~store_max_records", 1024)), int(rospy.get_param("~terminal_republish_count", 3)),
-        float(rospy.get_param("~terminal_republish_interval_s", 0.2)), float(rospy.get_param("~shutdown_hold_timeout_s", 2.0)))
+        float(rospy.get_param("~terminal_republish_interval_s", 0.2)), float(rospy.get_param("~ego_hold_timeout_s", 2.0)))
     return identity, config
 
 

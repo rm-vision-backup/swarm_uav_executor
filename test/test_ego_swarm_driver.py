@@ -64,7 +64,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
     def _driver(self, **kw):
         ros = FakeRos(ready_param=kw.pop("ready", True))
         kw.setdefault("ros", ros)
-        kw.setdefault("state_timeout_s", 1.0)
+        kw.setdefault("task_timeout_s", 1.0)
         return EgoSwarmDriver(**kw), ros
 
     def _emit_pose(self, driver, x, y, z):
@@ -181,7 +181,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
     def test_hold_respects_caller_deadline(self):
         driver, _ = self._driver()
         # Expired deadline: hold() must return HOLD_TIMEOUT quickly instead of
-        # blocking for state_timeout_s (was 200s / 1.0s here) waiting forever.
+        # blocking for task_timeout_s (was 200s / 1.0s here) waiting forever.
         before = driver._monotonic_clock()
         result = driver.hold(HoldGoal("stop"), time.monotonic() - 1.0)
         self.assertFalse(result.success)
@@ -191,7 +191,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
     def test_hold_requires_deadline(self):
         driver, _ = self._driver()
         # No caller deadline: hold() must fail fast instead of falling back to
-        # state_timeout_s (200s). State-transition confirm is fully decoupled
+        # task_timeout_s (200s). State-transition confirm is fully decoupled
         # from task execution timeout.
         before = driver._monotonic_clock()
         result = driver.hold(HoldGoal("stop"), None)

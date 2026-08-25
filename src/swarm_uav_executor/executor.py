@@ -119,7 +119,7 @@ class UavTaskExecutor:
             try:
                 hold_result = self.driver.hold(
                     HoldGoal("%s: %s" % (result.error_code, result.message)),
-                    self.clock() + self.config.shutdown_hold_timeout_s,
+                    self.clock() + self.config.ego_hold_timeout_s,
                 )
             except Exception as error:
                 hold_result = type("Result", (), {
@@ -147,7 +147,7 @@ class UavTaskExecutor:
             self._cancel = None
 
     def _run_hold(self, interrupted, reason):
-        try: result = self.driver.hold(HoldGoal(reason), self.clock() + self.config.shutdown_hold_timeout_s)
+        try: result = self.driver.hold(HoldGoal(reason), self.clock() + self.config.ego_hold_timeout_s)
         except Exception as error: result = type("Result", (), {"success": False, "error_code": "HOLD_FAILED", "message": str(error)})()
         with self._lock:
             if interrupted is not None:
@@ -171,6 +171,6 @@ class UavTaskExecutor:
         with self._lock: self._shutdown = True
         active = self.store.active()
         if active is not None: self._fail_active_and_hold("SHUTDOWN", "executor shutdown")
-        end = self.clock() + self.config.shutdown_hold_timeout_s
+        end = self.clock() + self.config.ego_hold_timeout_s
         for thread in tuple(self._threads): thread.join(max(0.0, end - self.clock()))
         self.reporter.shutdown(); self.driver.shutdown()

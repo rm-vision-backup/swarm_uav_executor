@@ -29,9 +29,9 @@ class ExecutorConfig:
     store_max_records: int = 1024
     terminal_republish_count: int = 3
     terminal_republish_interval_s: float = 0.2
-    # 本机 ego 状态切换/收口超时（HOLD 确认、shutdown join）。
-    # 独立于 ego_swarm.state_timeout_s（200s，任务执行超时），两者语义不可混用。
-    shutdown_hold_timeout_s: float = 2.0
+    # 本机 ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）。
+    # 独立于 ego_swarm.task_timeout_s（200s，任务执行超时），两者语义不可混用。
+    ego_hold_timeout_s: float = 2.0
     # Follower PI gains: scale the position error into a setpoint offset.
     follower_p_gain: float = 1.0        # position-error proportional gain
     follower_i_gain: float = 0.1        # position-error integral gain

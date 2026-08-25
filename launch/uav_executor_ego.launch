@@ -17,9 +17,9 @@
   <!-- 任务执行超时（DRIVER_TIMEOUT 兜底）：长任务（15 分钟级覆盖航线）需延长
        terminal exec_state 等待窗口；默认 200s，长航线启动时经上层 launch 覆盖。 -->
   <arg name="uav_task_timeout_s" default="200.0" />
-  <!-- ego 状态切换/收口超时（HOLD 确认、shutdown join）：与任务执行超时
+  <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）：与任务执行超时
        uav_task_timeout_s 完全独立；默认 2s，可在上层 launch 覆盖。 -->
-  <arg name="ego_state_timeout_s" default="2.0" />
+  <arg name="ego_hold_timeout_s" default="2.0" />
   <!-- Predictive safety stage A defaults to observation only. -->
   <arg name="safety_supervisor_mode" default="shadow" />
   <arg name="diagnostic_log_dir"
@@ -114,10 +114,10 @@
     <param name="driver" value="ego_swarm" />
     <param name="require_explicit_start" value="true" />
     <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
-    <!-- ego 状态切换/收口超时（HOLD 确认、shutdown join）独立于任务执行超时 -->
-    <param name="shutdown_hold_timeout_s" value="$(arg ego_state_timeout_s)" />
+    <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）独立于任务执行超时 -->
+    <param name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
     <param name="ego_swarm/namespace" value="" />
-    <param name="ego_swarm/state_timeout_s" value="$(arg uav_task_timeout_s)" />
+    <param name="ego_swarm/task_timeout_s" value="$(arg uav_task_timeout_s)" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
     <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
     <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
