@@ -188,6 +188,17 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual(result.error_code, "HOLD_TIMEOUT")
         self.assertLess(driver._monotonic_clock() - before, 1.0)
 
+    def test_hold_requires_deadline(self):
+        driver, _ = self._driver()
+        # No caller deadline: hold() must fail fast instead of falling back to
+        # state_timeout_s (200s). State-transition confirm is fully decoupled
+        # from task execution timeout.
+        before = driver._monotonic_clock()
+        result = driver.hold(HoldGoal("stop"), None)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "HOLD_TIMEOUT")
+        self.assertLess(driver._monotonic_clock() - before, 0.1)
+
     def test_health_false_when_node_missing(self):
         driver, _ = self._driver(ready=False)
         health = driver.health()

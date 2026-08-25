@@ -548,15 +548,14 @@ class EgoSwarmDriver(MotionDriver):
             state = self._last_cmd_reply
         if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
             return MotionResult(True, "", "egoswarm already holding")
-        self._issue_hold()
-        # Bounded confirm: wait at most min(caller deadline, state_timeout_s).
-        # Ignoring the caller deadline used to block for state_timeout_s (200s)
-        # when the node never confirmed, stalling the whole task entry.
-        now = self._monotonic_clock()
-        timeout_s = float(self.state_timeout_s)
-        if deadline is not None:
-            timeout_s = min(timeout_s, max(0.0, float(deadline) - now))
-        end = now + timeout_s
+        if deadline is None:
+            return MotionResult(False, "HOLD_TIMEOUT", "egoswarm hold requires a deadline")
+        # State-transition confirm bound comes ONLY from the caller deadline
+        # (executor passes clock() + state_transition_timeout_s, default 2s).
+        # This is intentionally independent from state_timeout_s (200s), which
+        # bounds task *execution* (DRIVER_TIMEOUT), not HOLD confirmation.
+        # Contract: deadline must use the same clock as self._monotonic_clock().
+        end = float(deadline)
         while self._monotonic_clock() < end and not self._shutdown:
             with self._lock:
                 state = self._last_cmd_reply
