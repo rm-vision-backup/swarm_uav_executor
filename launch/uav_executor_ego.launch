@@ -41,8 +41,6 @@
     <param name="local_pose_timeout_s" value="1.0" />
     <param name="position_tolerance_m" value="0.6" />
     <param name="arrival_stable_s" value="1.0" />
-    <param name="terminal_to_idle_s" value="2.0" />
-    <param name="idle_hover_refresh_hz" value="1.0" />
     <param name="swarm_clearance" value="0.5" />
     <param name="lambda_swarm" value="1.0" />
     <param name="enable_rebound" value="$(arg enable_rebound)" />
