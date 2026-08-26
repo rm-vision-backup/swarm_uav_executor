@@ -31,14 +31,13 @@ from ..models import DriverHealth, HoldGoal, MotionGoal, MotionResult
 _STATE_EXECUTING = "EXECUTING"
 _STATE_COMPLETED = "COMPLETED"
 _STATE_HOLD = "HOLD"
-_STATE_POSE_STALE = "POSE_STALE"
 _STATE_PLAN_FAILED = "EGO_PLAN_FAILED"
 _STATE_TIMEOUT = "EGO_EXEC_TIMEOUT"
 _STATE_EMERGENCY_BRAKE = "EMERGENCY_BRAKE"
 _STATE_BRAKE_HOLD = "BRAKE_HOLD"
 _TERMINAL_OK = frozenset((_STATE_COMPLETED,))
-_TERMINAL_BAD = frozenset((_STATE_POSE_STALE, _STATE_PLAN_FAILED, _STATE_TIMEOUT,
-                           _STATE_BRAKE_HOLD))
+# implementation_plan_26082621：删 POSE_STALE（C++ 不再发布该状态；HOLD 锁存位置）。
+_TERMINAL_BAD = frozenset((_STATE_PLAN_FAILED, _STATE_TIMEOUT, _STATE_BRAKE_HOLD))
 _MONITOR_HZ = 20.0
 
 _SETPOINT_HZ = 30.0
@@ -87,7 +86,7 @@ class EgoSwarmDriver(MotionDriver):
                   px4_params=None,
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
-                  waypoint_densify_spacing=2.0,
+                  waypoint_densify_spacing=3.0,
                   follower_setpoint_topic="/setpoint/follower"):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
@@ -626,7 +625,7 @@ class EgoSwarmDriver(MotionDriver):
             layer_fault_exit=rospy.get_param("~ego_swarm/layer_fault_exit", 8.0),
             layer_tolerance_m=rospy.get_param("~ego_swarm/layer_tolerance_m", 0.5),
             waypoint_densify_spacing=rospy.get_param(
-                "~ego_swarm/waypoint_densify_spacing", 2.0),
+                "~ego_swarm/waypoint_densify_spacing", 3.0),
             follower_setpoint_topic=rospy.get_param(
                 "~ego_swarm/follower_setpoint_topic", "/setpoint/follower"),
             arm_service=rospy.get_param("~ego_swarm/arm_service", "/mavros/cmd/arming"),

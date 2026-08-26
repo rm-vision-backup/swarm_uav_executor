@@ -312,7 +312,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual([(p.x, p.y, p.z) for p in points],
                          [(1, 0, 5), (1, 0, 5), (2, 0, 10), (2, 0, 10), (3, 0, 12)])
 
-    # ---- 方案 B：分层关键点 + 2m 密化 + waypoints 发布 ----
+    # ---- 方案 B：分层关键点 + 3m 密化 + waypoints 发布 ----
 
     def test_move_to_builds_layered_keypoints(self):
         driver, _ = self._driver()
@@ -351,32 +351,32 @@ class EgoSwarmDriverTest(unittest.TestCase):
 
     def test_densify_waypoints_bounds_spacing(self):
         driver, _ = self._driver()
-        dense = driver._densify_waypoints([(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)], 2.0)
-        self.assertGreaterEqual(len(dense), 6)
+        dense = driver._densify_waypoints([(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)], 3.0)
+        self.assertGreaterEqual(len(dense), 5)
         distances = [math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
                      for a, b in zip(dense, dense[1:])]
-        self.assertLessEqual(max(distances), 2.0 + 1e-9)
+        self.assertLessEqual(max(distances), 3.0 + 1e-9)
 
     def test_move_to_publishes_waypoints_not_goal(self):
         driver, _ = self._driver()
         self._emit_pose(driver, 0.0, 0.0, 5.0)
         goal = MotionGoal(50.0, -17.5, 12.0, 0, command="MOVE_TO")
         keypoints = driver._build_layered_keypoints(goal, (0.0, 0.0, 5.0))
-        dense = driver._densify_waypoints(keypoints, 2.0)
+        dense = driver._densify_waypoints(keypoints, 3.0)
         driver._publish_waypoints_from_list(dense)
         msgs = driver._waypoints_pub.msgs
         self.assertEqual(len(msgs), 1)
         pts = msgs[0].polygon.points
-        # ~(10+53+3)m / 2m 间距 -> 约 35 点（2m 密化仅作 C++ 窗口推进/末点参考）
-        self.assertGreaterEqual(len(pts), 30)
-        self.assertLessEqual(len(pts), 60)
+        # ~(10+53+3)m / 3m 间距 -> 约 23 点（3m 密化仅作 C++ 相邻目标推进/末点参考）
+        self.assertGreaterEqual(len(pts), 18)
+        self.assertLessEqual(len(pts), 30)
         self.assertEqual((pts[0].x, pts[0].y, pts[0].z), (0.0, 0.0, 5.0))  # start 首点
         self.assertAlmostEqual(pts[-1].x, 50.0)
         self.assertAlmostEqual(pts[-1].z, 12.0)
-        # 相邻点距不超过 2m（2m 密化约束）。
+        # 相邻点距不超过 3m（3m 密化约束）。
         distances = [math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
                      for a, b in zip(pts, pts[1:])]
-        self.assertLessEqual(max(distances), 2.0 + 1e-9)
+        self.assertLessEqual(max(distances), 3.0 + 1e-9)
 
     # ---- min-snap 重构：执行层 EGO 巡航距离门禁 ----
 

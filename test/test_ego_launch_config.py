@@ -58,6 +58,26 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
 
+    def test_waypoint_densify_spacing_is_3m(self):
+        # implementation_plan_26082621：分层关键点按 3m 间距密化后发布 /waypoints，
+        # C++ plan-exec 用"相邻下一个 keypoint"推进（无 horizon 窗口滚动）。
+        executor = next(node for node in self.root.findall("node")
+                        if node.attrib.get("type") == "uav_executor_node.py")
+        params = {item.attrib["name"]: item.attrib.get("value")
+                  for item in executor.findall("param")}
+        self.assertEqual(params.get("ego_swarm/waypoint_densify_spacing"), "3.0")
+        # plan-exec A/B/C 分支阈值参数已下发 C++ 节点（launch 静态断言）。
+        planner = next(node for node in self.root.findall("node")
+                       if node.attrib.get("name") == "ego_planner_driver")
+        params = {item.attrib["name"]: item.attrib.get("value")
+                  for item in planner.findall("param")}
+        self.assertEqual(params.get("reach_thresh_m"), "0.5")
+        self.assertEqual(params.get("max_advance_dist_m"), "3.5")
+        self.assertEqual(params.get("arrival_reach_thresh_m"), "0.1")
+        # horizon 窗口滚动已删除：launch 不应再下发 planning_horizon/position_tolerance_m。
+        self.assertNotIn("planning_horizon", params)
+        self.assertNotIn("position_tolerance_m", params)
+
     def test_state_transition_timeout_decoupled_from_execution_timeout(self):
         args = {item.attrib["name"]: item.attrib.get("default")
                 for item in self.root.findall("arg")}
