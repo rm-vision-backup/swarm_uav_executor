@@ -54,7 +54,8 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertNotIn("intent_negotiation_wait_s", params)
         self.assertNotIn("yield_max_velocity_mps", params)
         self.assertEqual(params.get("enable_yield_candidates"), "true")
-        self.assertEqual(params.get("yield_clearance_factor"), "1.3")
+        self.assertEqual(params.get("yield_clearance_factor"), "1.2")
+        self.assertEqual(params.get("yield_lateral_max_m"), "2.2")
         self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
 
