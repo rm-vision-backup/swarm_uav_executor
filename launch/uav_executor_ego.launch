@@ -47,10 +47,11 @@
     <param name="replan_period_s" value="1.0" />
     <param name="no_replan_thresh_m" value="1.0" />
     <!-- plan-exec A/B/C 分支阈值（implementation_plan_26082621）：到当前目标
-         <0.5m 切下一关键点、推进最远 3.5m、到达最终关键点 <0.1m → COMPLETED。 -->
+         <0.5m 切下一关键点、推进最远 3.5m、到达最终关键点 <0.2m → COMPLETED
+         （26082621 复盘：PX4 SITL 稳态偏差 0.13-0.17m，0.1m 太紧导致末段 HOLD）。 -->
     <param name="reach_thresh_m" value="0.5" />
     <param name="max_advance_dist_m" value="3.5" />
-    <param name="arrival_reach_thresh_m" value="0.1" />
+    <param name="arrival_reach_thresh_m" value="0.2" />
     <param name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
     <param name="safety_supervisor_rate_hz" value="25.0" />
     <!-- 周期碰撞检查：10Hz，本机轨迹 vs fresh 邻机轨迹，< 固定 clearance → replan
