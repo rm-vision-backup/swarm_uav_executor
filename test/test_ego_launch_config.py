@@ -49,11 +49,12 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("neighbor_stale_policy"), "diagnose_only")
         self.assertEqual(params.get("neighbor_missing_policy"),
                          "continue_after_barrier")
-        # L3 精简（implementation_plan_26082500）删除 yield/negotiation 参数；
-        # 26082602 新增周期碰撞检查（10Hz），替代事件驱动 replan。
+        # L3 精简删除 negotiation 参数；26082602 §10 恢复 enable_yield_candidates
+        # （SLOW/LEFT/RIGHT 让路候选 + right-of-way）。
         self.assertNotIn("intent_negotiation_wait_s", params)
-        self.assertNotIn("enable_yield_candidates", params)
         self.assertNotIn("yield_max_velocity_mps", params)
+        self.assertEqual(params.get("enable_yield_candidates"), "true")
+        self.assertEqual(params.get("yield_clearance_factor"), "1.3")
         self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
 
