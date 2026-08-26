@@ -70,6 +70,9 @@
     <!-- 对齐原版 fsm/emergency_time=1.0s：EMERGENCY 先尝试重规划，预测越界
          (ttc) 小于该值才立即受约束制动，否则交常规 replanLoop。 -->
     <param name="emergency_replan_time_s" value="1.0" />
+    <!-- 对齐原版 SEQUENTIAL_START：首轮规划前等待前驱无人机 intent 超时（防
+         前驱缺失/失联时永久阻塞）；默认 10s。 -->
+    <param name="first_plan_wait_timeout_s" value="10.0" />
     <param name="neighbor_stale_policy" value="diagnose_only" />
     <param name="neighbor_intent_stale_s" value="2.0" />
     <param name="neighbor_missing_policy" value="continue_after_barrier" />

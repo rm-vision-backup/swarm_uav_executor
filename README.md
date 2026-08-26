@@ -60,7 +60,7 @@ mkdir -p "$ROS_LOG_DIR"
 
 ```bash
 roslaunch swarm_uav_executor uav_executor_mock.launch \
-  uav_id:=A01 exec_target:=UAV1 service_namespace:=UAV1
+  uav_id:=UAV1 exec_target:=UAV1 service_namespace:=UAV1
 ```
 
 ## Direct MAVROS 启动
@@ -69,7 +69,7 @@ roslaunch swarm_uav_executor uav_executor_mock.launch \
 
 ```bash
 roslaunch swarm_uav_executor uav_executor_mavros.launch \
-  uav_id:=A01 exec_target:=UAV1 service_namespace:=UAV1 \
+  uav_id:=UAV1 exec_target:=UAV1 service_namespace:=UAV1 \
   mavros_namespace:=/uav1/mavros frame_id:=map \
   interfaces_version:=<deployment-version>
 ```

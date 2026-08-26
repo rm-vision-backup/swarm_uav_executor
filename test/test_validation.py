@@ -8,27 +8,27 @@ from swarm_uav_executor.validation import RequestValidationError, build_goal, re
 
 def request():
     req = UavTaskRequest(protocol_version="1.0", mission_id="m1", group_id="GroupA", command_id="c1",
-        uav_id="A01", exec_target="UAV1", command="MOVE_TO", timeout_s=2.0, leader_id="")
-    req.assignment = TaskAssignment(uav_id="A01"); req.assignment.target_pose.x = 1.0
+        uav_id="UAV1", exec_target="UAV1", command="MOVE_TO", timeout_s=2.0, leader_id="")
+    req.assignment = TaskAssignment(uav_id="UAV1"); req.assignment.target_pose.x = 1.0
     return req
 
 class ValidationTest(unittest.TestCase):
     def test_valid_and_stable_fingerprint(self):
-        req = request(); validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+        req = request(); validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO",))
         self.assertEqual(request_fingerprint(req), request_fingerprint(req))
     def test_rejects_other_uav(self):
-        req = request(); req.uav_id = "A02"
-        with self.assertRaises(RequestValidationError) as caught: validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+        req = request(); req.uav_id = "UAV2"
+        with self.assertRaises(RequestValidationError) as caught: validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO",))
         self.assertEqual(caught.exception.error_code, "IDENTITY_MISMATCH")
     def test_rejects_route_fields(self):
-        req = request(); req.assignment.target_id = "A02"
-        with self.assertRaises(RequestValidationError): validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+        req = request(); req.assignment.target_id = "UAV2"
+        with self.assertRaises(RequestValidationError): validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO",))
 class RouteValidationTest(unittest.TestCase):
     def _route(self, follower=False):
         req = UavTaskRequest(protocol_version="1.0", mission_id="m1", group_id="GroupA",
-            command_id="c2", uav_id="A01", exec_target="UAV1", command="FOLLOW_ROUTE",
-            timeout_s=2.0, leader_id="A01")
-        req.assignment = TaskAssignment(uav_id="A01")
+            command_id="c2", uav_id="UAV1", exec_target="UAV1", command="FOLLOW_ROUTE",
+            timeout_s=2.0, leader_id="UAV1")
+        req.assignment = TaskAssignment(uav_id="UAV1")
         req.assignment.formation_follow = bool(follower)
         wp = Pose3DYaw()
         req.assignment.waypoints.append(wp)
@@ -44,36 +44,36 @@ class RouteValidationTest(unittest.TestCase):
     def test_leader_route_keeps_leader_id(self):
         req = self._route()
         goal = build_goal(req)
-        self.assertEqual(goal.leader_id, "A01")
+        self.assertEqual(goal.leader_id, "UAV1")
 
     def test_route_leader_id_different_is_follower(self):
         # leader_id differs from uav_id -> follower semantics, no longer rejected.
         req = self._route()
-        req.leader_id = "A02"
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        req.leader_id = "UAV2"
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         goal = build_goal(req)
         self.assertEqual(goal.command, "FOLLOW_ROUTE")
         self.assertTrue(goal.formation_follow)
-        self.assertEqual(goal.leader_id, "A02")
+        self.assertEqual(goal.leader_id, "UAV2")
         self.assertEqual(goal.formation_offset, (0.0, 0.0, 0.0))
 
     def test_follower_route_requires_distinct_leader(self):
         # formation_follow=True but leader_id == uav_id -> invalid assignment.
         req = self._route(follower=True)
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
         self.assertIn("leader_id", caught.exception.message)
 
     def test_follower_route_without_waypoints_ok(self):
         # A follower tracks leader+offset and does not require waypoints.
         req = self._route()
-        req.leader_id = "A02"
+        req.leader_id = "UAV2"
         req.assignment.waypoints[:] = []
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         goal = build_goal(req)
         self.assertTrue(goal.formation_follow)
-        self.assertEqual(goal.leader_id, "A02")
+        self.assertEqual(goal.leader_id, "UAV2")
         self.assertEqual(goal.waypoints, ())
         self.assertEqual(goal.layer_z, 12.0)
 
@@ -81,7 +81,7 @@ class RouteValidationTest(unittest.TestCase):
         # GCS_A injects the formation slot into assignment.formation_offset;
         # validation must propagate it into the MotionGoal.
         req = self._route()
-        req.leader_id = "A02"
+        req.leader_id = "UAV2"
         req.assignment.formation_follow = True
         req.assignment.formation_offset.x = 0.0
         req.assignment.formation_offset.y = -5.0
@@ -89,7 +89,7 @@ class RouteValidationTest(unittest.TestCase):
         goal = build_goal(req)
         self.assertTrue(goal.formation_follow)
         self.assertEqual(goal.formation_offset, (0.0, -5.0, 0.0))
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         self.assertEqual(build_goal(req).formation_offset, (0.0, -5.0, 0.0))
 
     def test_leader_route_fills_layer_z_12(self):
@@ -101,14 +101,14 @@ class RouteValidationTest(unittest.TestCase):
     def test_route_requires_waypoints(self):
         req = self._route(); req.assignment.waypoints[:] = []
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
 
     def test_route_rejects_non_mid_layer(self):
         req = self._route()
         req.assignment.waypoints[0].z = 5.0
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO", "FOLLOW_ROUTE"))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
         self.assertIn("12 m", caught.exception.message)
 
@@ -116,19 +116,19 @@ class RouteValidationTest(unittest.TestCase):
 class LayerHeightValidationTest(unittest.TestCase):
     def _cmd(self, command, z):
         req = UavTaskRequest(protocol_version="1.0", mission_id="m1", group_id="GroupA",
-            command_id="c3", uav_id="A01", exec_target="UAV1", command=command,
+            command_id="c3", uav_id="UAV1", exec_target="UAV1", command=command,
             timeout_s=2.0, leader_id="")
-        req.assignment = TaskAssignment(uav_id="A01")
+        req.assignment = TaskAssignment(uav_id="UAV1")
         req.assignment.target_pose.x = 1.0
         req.assignment.target_pose.z = z
         return req
 
     def test_fault_exit_requires_8m_layer(self):
         req = self._cmd("FAULT_EXIT", 8.0)
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("FAULT_EXIT",))
         req = self._cmd("FAULT_EXIT", 15.0)
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("FAULT_EXIT",))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
         self.assertIn("8 m", caught.exception.message)
 
@@ -138,7 +138,7 @@ class LayerHeightValidationTest(unittest.TestCase):
         wp1 = Pose3DYaw(); wp1.x, wp1.y, wp1.z, wp1.yaw = 85.0, 75.0, 8.0, 0.0
         wp2 = Pose3DYaw(); wp2.x, wp2.y, wp2.z, wp2.yaw = 5.0, 20.0, 8.0, 0.0
         req.assignment.waypoints.append(wp1); req.assignment.waypoints.append(wp2)
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("FAULT_EXIT",))
         goal = build_goal(req)
         self.assertEqual(goal.command, "FAULT_EXIT")
         self.assertEqual(goal.layer_z, 8.0)
@@ -151,29 +151,29 @@ class LayerHeightValidationTest(unittest.TestCase):
         wp = Pose3DYaw(); wp.x, wp.y, wp.z, wp.yaw = 5.0, 20.0, 12.0, 0.0
         req.assignment.waypoints.append(wp)
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("FAULT_EXIT",))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("FAULT_EXIT",))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
         self.assertIn("8 m", caught.exception.message)
 
     def test_hover_z_range(self):
         req = self._cmd("HOVER", 10.0)
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("HOVER",))
         req = self._cmd("HOVER", 20.0)
         with self.assertRaises(RequestValidationError) as caught:
-            validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+            validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("HOVER",))
         self.assertEqual(caught.exception.error_code, "INVALID_ASSIGNMENT")
 
     def test_hover_accepts_placeholder_assignment(self):
         # Runtime hold-end sends HOVER with only a uav_id (zero placeholder pose).
         req = self._cmd("HOVER", 0.0)
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("HOVER",))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("HOVER",))
         goal = build_goal(req)
         self.assertEqual(goal.command, "HOVER")
         self.assertEqual(goal.layer_z, 0.0)
 
     def test_move_to_unconstrained_z(self):
         req = self._cmd("MOVE_TO", 16.0)
-        validate_task_request(req, ExecutorIdentity("A01", "UAV1"), ("MOVE_TO",))
+        validate_task_request(req, ExecutorIdentity("UAV1", "UAV1"), ("MOVE_TO",))
 
     def test_build_goal_fills_layer_z(self):
         req = self._cmd("MOVE_TO", 16.0)
