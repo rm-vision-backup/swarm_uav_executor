@@ -4,8 +4,11 @@ from pathlib import Path
 import unittest
 import xml.etree.ElementTree as ET
 
+import yaml
+
 
 LAUNCH = Path(__file__).resolve().parents[1] / "launch" / "uav_executor_ego.launch"
+DEFAULTS = Path(__file__).resolve().parents[1] / "config" / "executor_defaults.yaml"
 
 
 class EgoLaunchConfigTest(unittest.TestCase):
@@ -34,10 +37,10 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("ego_swarm/neighbor_intents"),
                          "$(arg neighbor_intents)")
 
-    def test_predictive_supervisor_is_shadow_and_logs_in_workspace(self):
+    def test_predictive_supervisor_is_active_and_logs_in_workspace(self):
         args = {item.attrib["name"]: item.attrib.get("default")
                 for item in self.root.findall("arg")}
-        self.assertEqual(args.get("safety_supervisor_mode"), "shadow")
+        self.assertEqual(args.get("safety_supervisor_mode"), "active")
         self.assertTrue(args.get("diagnostic_log_dir", "").endswith(
             "/runtime_logs/ego_planner"))
         planner = next(node for node in self.root.findall("node")
@@ -58,6 +61,13 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("yield_max_velocity_mps"), "2.5")
         self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
+
+    def test_executor_defaults_use_single_3d_center_distance(self):
+        with DEFAULTS.open(encoding="utf-8") as stream:
+            ego_swarm = yaml.safe_load(stream)["ego_swarm"]
+        self.assertEqual(ego_swarm.get("min_center_distance_m"), 1.0)
+        self.assertNotIn("min_horizontal_distance_m", ego_swarm)
+        self.assertNotIn("min_vertical_distance_m", ego_swarm)
 
     def test_waypoint_densify_spacing_is_3m(self):
         # implementation_plan_26082621：分层关键点按 3m 间距密化后发布 /waypoints，

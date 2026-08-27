@@ -15,5 +15,6 @@
   <depend>tf</depend>
   <test_depend>rostest</test_depend>
   <test_depend>python3-nose</test_depend>
+  <test_depend>python3-yaml</test_depend>
   <export />
 </package>

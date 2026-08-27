@@ -84,6 +84,14 @@ class EgoSwarmDriverTest(unittest.TestCase):
         odom.pose.pose.position.z = z
         driver._on_leader_odom(odom)
 
+    def _emit_neighbor_odom(self, driver, x, y, z):
+        from nav_msgs.msg import Odometry
+        odom = Odometry()
+        odom.pose.pose.position.x = x
+        odom.pose.pose.position.y = y
+        odom.pose.pose.position.z = z
+        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+
     def _dispatch(self, driver, goal, state, delay_s=0.05):
         self._emit_pose(driver, 0.0, 0.0, 15.0)
         result_holder = {}
@@ -383,13 +391,8 @@ class EgoSwarmDriverTest(unittest.TestCase):
     def test_ego_cruise_distance_gate_triggers_hold(self):
         driver, _ = self._driver()
         self._emit_pose(driver, 0.0, 0.0, 12.0)
-        # 注入邻机 odom 过近：水平 0.5m < 1.0m 且垂直 0.1m < 2.0m。
-        from nav_msgs.msg import Odometry
-        odom = Odometry()
-        odom.pose.pose.position.x = 0.5
-        odom.pose.pose.position.y = 0.0
-        odom.pose.pose.position.z = 12.1
-        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+        # 3D center distance 0.99m is strictly below the 1.0m threshold.
+        self._emit_neighbor_odom(driver, 0.99, 0.0, 12.0)
         goal = MotionGoal(10, 0, 12, 0)
         result_holder = {}
         def runner():
@@ -402,8 +405,35 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertFalse(result.success)
         self.assertEqual(result.error_code, "MIN_DISTANCE_BREACH")
+        self.assertIn("0.990 m", result.message)
+        self.assertIn("1.000 m", result.message)
         # 本机 HOLD 已发出（_issue_hold -> /hold），暂停不自动恢复。
         self.assertGreaterEqual(len(driver._hold_pub.msgs), 1)
+
+    def test_3d_distance_gate_accepts_1_01m(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        self._emit_neighbor_odom(driver, 1.01, 0.0, 12.0)
+        self.assertTrue(driver._distance_safe(driver._last_pose))
+
+    def test_3d_distance_gate_accepts_pure_vertical_1_5m(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        self._emit_neighbor_odom(driver, 0.0, 0.0, 13.5)
+        self.assertTrue(driver._distance_safe(driver._last_pose))
+
+    def test_3d_distance_gate_accepts_0_9m_xy_diagonal(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        self._emit_neighbor_odom(driver, 0.9, 0.9, 12.0)
+        self.assertTrue(driver._distance_safe(driver._last_pose))
+
+    def test_3d_distance_gate_accepts_exactly_1m(self):
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        self._emit_neighbor_odom(driver, 0.0, 0.6, 12.8)
+        self.assertAlmostEqual(driver._nearest_neighbor_distance(driver._last_pose), 1.0)
+        self.assertTrue(driver._distance_safe(driver._last_pose))
 
     def test_ego_cruise_distance_gate_ignores_far_neighbor(self):
         driver, _ = self._driver()

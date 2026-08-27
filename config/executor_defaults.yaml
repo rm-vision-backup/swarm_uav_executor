@@ -18,8 +18,7 @@ ego_swarm:
   namespace: ""
   # 任务执行超时（DRIVER_TIMEOUT 兜底；launch 层 uav_task_timeout_s 覆盖）
   task_timeout_s: 200.0
-  min_horizontal_distance_m: 1.0
-  min_vertical_distance_m: 2.0
+  min_center_distance_m: 1.0
   position_tolerance_m: 0.2
   arrival_stable_s: 1.0
   pose_timeout_s: 1.0

@@ -83,9 +83,8 @@ class EgoSwarmDriver(MotionDriver):
                  formation_offsets=None, leader_odom_topic_prefix="",
                  arm_service="/mavros/cmd/arming", mode_service="/mavros/set_mode",
                  origin_confirmed_topic="/gp_origin_confirmed",
-                 neighbor_odom_topics='', min_horizontal_distance_m=1.0,
-                  min_vertical_distance_m=2.0, configure_px4_params=False,
-                  px4_param_set_timeout_s=5.0,
+                 neighbor_odom_topics='', min_center_distance_m=1.0,
+                  configure_px4_params=False, px4_param_set_timeout_s=5.0,
                   px4_params=None,
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
@@ -190,8 +189,7 @@ class EgoSwarmDriver(MotionDriver):
         for topic in _split_topics(neighbor_odom_topics):
             self._neighbor_odom_subs.append(ros.Subscriber(
                 topic, Odometry, self._on_neighbor_odom, callback_args=topic, queue_size=1))
-        self._min_horizontal_distance_m = float(min_horizontal_distance_m)
-        self._min_vertical_distance_m = float(min_vertical_distance_m)
+        self._min_center_distance_m = float(min_center_distance_m)
         self._layer_move_to = float(layer_move_to)
         self._layer_follow_route = float(layer_follow_route)
         self._layer_fault_exit = float(layer_fault_exit)
@@ -236,19 +234,33 @@ class EgoSwarmDriver(MotionDriver):
         with self._lock:
             self._neighbor_poses[topic] = (copy.deepcopy(msg.pose.pose), self._monotonic_clock())
 
-    def _distance_safe(self, own_pose):
+    def _nearest_neighbor_distance(self, own_pose):
+        """Return the nearest fresh neighbor's 3D center distance, if any."""
         now = self._monotonic_clock()
         with self._lock:
             neighbors = tuple(self._neighbor_poses.values())
+        distances = []
         for pose, stamp in neighbors:
             if now - stamp > self.pose_timeout_s:
                 continue
-            horizontal = math.hypot(own_pose.position.x - pose.position.x,
-                                    own_pose.position.y - pose.position.y)
-            vertical = abs(own_pose.position.z - pose.position.z)
-            if horizontal < self._min_horizontal_distance_m and vertical < self._min_vertical_distance_m:
-                return False
-        return True
+            dx = own_pose.position.x - pose.position.x
+            dy = own_pose.position.y - pose.position.y
+            dz = own_pose.position.z - pose.position.z
+            distances.append(math.sqrt(dx * dx + dy * dy + dz * dz))
+        return min(distances) if distances else None
+
+    def _distance_breach(self, own_pose):
+        distance = self._nearest_neighbor_distance(own_pose)
+        if distance is not None and distance < self._min_center_distance_m:
+            return distance
+        return None
+
+    def _distance_safe(self, own_pose):
+        return self._distance_breach(own_pose) is None
+
+    def _distance_breach_message(self, distance, context):
+        return ("neighbor 3D center distance %.3f m below minimum %.3f m during %s" %
+                (distance, self._min_center_distance_m, context))
 
     def _leader_odom_topic_for(self, leader_id):
         if self._leader_odom_topic_prefix:
@@ -394,16 +406,18 @@ class EgoSwarmDriver(MotionDriver):
                 return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
             if base_state is not None and self._monotonic_clock() >= base_state + self.task_timeout_s:
                 return MotionResult(False, "DRIVER_TIMEOUT", "no terminal exec_state within timeout")
-            # 执行层运行时距离门禁（min-snap 重构）：EGO 巡航期间邻机过近
-            # （水平 < min_horizontal_distance_m 且垂直 < min_vertical_distance_m）
-            # -> 本机 HOLD 暂停，任务以 FAILED/MIN_DISTANCE_BREACH 收口（避碰
-            # 失败兜底，不自动恢复）。复用 _distance_safe（follower 同款逻辑）。
+            # 执行层运行时距离门禁：EGO 巡航期间任一 fresh 邻机的三维中心距
+            # < min_center_distance_m -> 本机 HOLD 暂停，任务以
+            # FAILED/MIN_DISTANCE_BREACH 收口（避碰失败兜底，不自动恢复）。
             with self._lock:
                 own_pose = self._last_pose
-            if own_pose is not None and not self._distance_safe(own_pose):
+            distance = (self._distance_breach(own_pose)
+                        if own_pose is not None else None)
+            if distance is not None:
                 self._issue_hold()
-                return MotionResult(False, "MIN_DISTANCE_BREACH",
-                                    "neighbor distance breached during ego cruise")
+                return MotionResult(
+                    False, "MIN_DISTANCE_BREACH",
+                    self._distance_breach_message(distance, "ego cruise"))
             with self._lock:
                 state = self._last_cmd_reply
             if state is None:
@@ -477,9 +491,11 @@ class EgoSwarmDriver(MotionDriver):
                     return MotionResult(False, "LEADER_LOST", "leader odom timed out")
                 if own_pose is None:
                     return MotionResult(False, "POSE_STALE", "no local pose for follower loop")
-                if not self._distance_safe(own_pose):
-                    return MotionResult(False, "MIN_DISTANCE_BREACH",
-                                        "neighbor distance breached during follower PI control")
+                distance = self._distance_breach(own_pose)
+                if distance is not None:
+                    return MotionResult(
+                        False, "MIN_DISTANCE_BREACH",
+                        self._distance_breach_message(distance, "follower PI control"))
                 target = (leader_pose.position.x + offset[0],
                           leader_pose.position.y + offset[1],
                           leader_pose.position.z + offset[2])
@@ -635,8 +651,8 @@ class EgoSwarmDriver(MotionDriver):
             mode_service=rospy.get_param("~ego_swarm/mode_service", "/mavros/set_mode"),
             origin_confirmed_topic=rospy.get_param("~ego_swarm/origin_confirmed_topic", "/gp_origin_confirmed"),
             neighbor_odom_topics=neighbor_odom_topics,
-            min_horizontal_distance_m=rospy.get_param("~ego_swarm/min_horizontal_distance_m", 1.0),
-            min_vertical_distance_m=rospy.get_param("~ego_swarm/min_vertical_distance_m", 2.0),
+            min_center_distance_m=rospy.get_param(
+                "~ego_swarm/min_center_distance_m", 1.0),
             configure_px4_params=rospy.get_param(
                 "~ego_swarm/configure_px4_params", False),
             px4_param_set_timeout_s=rospy.get_param(

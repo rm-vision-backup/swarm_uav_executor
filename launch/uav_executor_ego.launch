@@ -20,8 +20,8 @@
   <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）：与任务执行超时
        uav_task_timeout_s 完全独立；默认 2s，可在上层 launch 覆盖。 -->
   <arg name="ego_hold_timeout_s" default="2.0" />
-  <!-- Predictive safety stage A defaults to observation only. -->
-  <arg name="safety_supervisor_mode" default="shadow" />
+  <!-- Predictive safety supervision is active by default; diagnostics may override it. -->
+  <arg name="safety_supervisor_mode" default="active" />
   <arg name="diagnostic_log_dir"
        default="/home/ub20tg/catkin_swarm6-2/runtime_logs/ego_planner" />
 
