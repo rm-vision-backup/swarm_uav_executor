@@ -2,11 +2,14 @@
 
 The C++ node publishes a latched exec_state topic that this driver uses as
 the single source of truth for the motion lifecycle:
-  IDLE -> EXECUTING -> COMPLETED / EGO_PLAN_FAILED / EGO_EXEC_TIMEOUT / HOLD
+  HOLD -> TAKEOFF -> EXECUTING -> COMPLETED / EGO_PLAN_FAILED / EGO_EXEC_TIMEOUT /
+  EMERGENCY_BRAKE -> BRAKE_HOLD
 
-  The driver owns arm/OFFBOARD preparation for motion commands.  The C++ node
-  generates all trajectory setpoints (PX4 OFFBOARD compatible), except for the
-  FOLLOW_ROUTE follower's PI position loop.
+  The driver performs arm/OFFBOARD pre-flight checks only (prepare() requires an
+  already-armed, OFFBOARD vehicle). Arm/OFFBOARD itself is done by the external
+  takeoff script (offboard_takeoff_15.py); soft takeoff is handled by the C++ node's
+  TAKEOFF state.  The C++ node generates all trajectory setpoints (PX4 OFFBOARD
+  compatible), except for the FOLLOW_ROUTE follower's PI position loop.
 
 - MOVE_TO / FAULT_EXIT / FOLLOW_ROUTE(leader) / HOVER: ego real-time planning.
 - FOLLOW_ROUTE(follower): track leader odom + formation offset with a

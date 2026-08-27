@@ -8,12 +8,17 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - 同一时刻最多一个正常任务；同键同内容幂等，同键不同内容拒绝，HOLD 可抢占。
 - `UavTask` 执行 PREPARE，`UavTaskControl START` 才允许动作线程推进；整批未通过时可在 START 前 ABORT。
 - `mavros_position` 只连接配置的本机 MAVROS namespace，持续发布本地位置 setpoint。
-- 正式 `ego_swarm` driver 是本机 arm/OFFBOARD 的唯一软件所有者：仅未 arm 的 `MOVE_TO` 在 START 后按需 arm，完成 5 m 垂直检查点并稳定 2 s；已 arm 飞机跳过该过程。`mavros_position` 兼容 driver 仍不自动 arm。
+- arm/OFFBOARD 由外部起飞脚本（`offboard_takeoff_15.py`：HOLD → arm → OFFBOARD）完成，
+  `ego_swarm` driver 的 `prepare()` 要求本机**已 armed + OFFBOARD**，不再自行按需 arm；
+  软起飞由 `ego_planner_driver` 的 `TAKEOFF` 状态自动完成（`takeoff_height_m=5.0`）。
+  `mavros_position` 兼容 driver 仍不自动 arm。
 - `MOVE_TO`、`FOLLOW_ROUTE`、`FAULT_EXIT` 分别使用 15/12/8 m 动作层；严格垂直段冻结 x/y/yaw，其他非 follower 航段使用 EGO，followers 使用 PI+编队偏置。
-- EGO launch 默认启用 25 Hz `safety_supervisor_mode=shadow`：预测结果写入工作区
-  `runtime_logs/ego_planner/UAVn-ego-planner.log`，不改变飞行行为。阶段 B active 制动接通前不得
-  把 shadow 视为主动安全闭环。
-- 垂直段与 follower PI 对邻机实施 1.0 m 水平、2.0 m 垂直中心距运行时门禁，突破门槛返回失败并触发整批 HOLD。
+- EGO launch 的 `safety_supervisor_mode` 默认 `shadow`（预测写入工作区
+  `runtime_logs/ego_planner/UAVn-ego-planner.log`，不改变飞行行为）；SITL 启动链
+  `startup_ego_sitl.sh` 统一以 `active` 启动（方案 Y：EMERGENCY 只置位，制动由 replan 线程提交）。
+  监督层细节见 `ego_planner_driver/README.md`。
+- EGO 巡航、垂直段与 follower PI 对邻机实施 1.0 m 水平、2.0 m 垂直中心距运行时门禁，
+  突破门槛返回失败并触发整批 HOLD（`_distance_safe`，EGO 巡航与 follower 共用）。
 - 坐标系、yaw 约定、阈值、A01-A15 映射及 MAVROS namespace 未经现场冻结前，只允许 mock、SITL 或不上桨验证。
 
 ## setpoint_relay（MAVROS setpoint 唯一出口）
@@ -96,7 +101,7 @@ rostopic hz /uav1/mavros/setpoint_position/local
 
 - `/state.connected`、pose 新鲜度和配置 frame 必须满足现场约定；
 - 对正式 `ego_swarm` driver，先确认冻结原点回读和 PREPARE 全部通过，再由 GCS_A 整批 START 触发按需起飞；
-- 验证 setpoint 频率、5 m 检查点、分层轨迹、整批 timeout、pose stale、MAVROS 断连和 HOLD；
+- 验证 setpoint 频率、软起飞（TAKEOFF）、分层轨迹、整批 timeout、pose stale、MAVROS 断连和 HOLD；
 - 保存 rosbag/ROS 日志与 PX4 failsafe 配置。没有 PX4 SITL 或现场签字时，只能声明 driver 自动化测试通过，不能声明飞行验收通过。
 
 ## 后续扩展
