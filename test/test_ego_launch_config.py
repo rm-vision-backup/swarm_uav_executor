@@ -61,6 +61,24 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertEqual(params.get("yield_max_velocity_mps"), "2.5")
         self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
         self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
+        # 资源安全边界（implementation_plan_26082722 §11）：生产 limits 参数存在
+        # 且被 C++ 节点读取（node 侧 fail-fast；此处静态断言值一致）。
+        self.assertEqual(params.get("max_arc_samples"), "4096")
+        self.assertEqual(params.get("max_parameterization_points"), "256")
+        self.assertEqual(params.get("max_trajectory_samples"), "4096")
+        self.assertEqual(params.get("max_neighbor_intent_samples"), "256")
+        self.assertEqual(params.get("segment_direction_epsilon_m"), "0.05")
+        # 冻结频率契约：planner candidate-publication 与 setpoint-relay 均为 30Hz，
+        # relay candidate timeout 0.2s（不随 OOM 修复改变）。
+        self.assertEqual(params.get("setpoint_rate_hz"), "30.0")
+        relay = next(node for node in self.root.findall("node")
+                     if node.attrib.get("name") == "setpoint_relay")
+        relay_params = {item.attrib["name"]: item.attrib.get("value")
+                        for item in relay.findall("param")}
+        self.assertEqual(relay_params.get("rate_hz"), "30.0")
+        self.assertEqual(relay_params.get("candidate_timeout_s"), "0.2")
+        self.assertEqual(relay_params.get("output_topic"),
+                         "/mavros/setpoint_raw/local")
 
     def test_executor_defaults_use_single_3d_center_distance(self):
         with DEFAULTS.open(encoding="utf-8") as stream:
