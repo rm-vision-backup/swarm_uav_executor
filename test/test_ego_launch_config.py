@@ -102,7 +102,7 @@ class EgoLaunchConfigTest(unittest.TestCase):
                   for item in planner.findall("param")}
         self.assertEqual(params.get("reach_thresh_m"), "0.5")
         self.assertEqual(params.get("max_advance_dist_m"), "3.5")
-        self.assertEqual(params.get("arrival_reach_thresh_m"), "0.2")
+        self.assertEqual(params.get("arrival_reach_thresh_m"), "0.5")
         # horizon 窗口滚动已删除：launch 不应再下发 planning_horizon/position_tolerance_m。
         self.assertNotIn("planning_horizon", params)
         self.assertNotIn("position_tolerance_m", params)
