@@ -1,3 +1,8 @@
+# 通用 executor 参数 canonical 默认（implementation_plan_26082916 §5）。
+# EGO 参数已迁移到 ego_swarm_defaults.yaml（~ego_swarm/*）；legacy MAVROS 参数已迁移到
+# mavros_position_legacy.yaml（~mavros_position/*）。本文件只保留驱动无关的通用参数。
+# uav_executor_mock.launch / uav_executor_ego.launch / uav_executor_mavros.launch 均加载。
+
 driver: mock
 store_ttl_s: 3600.0
 store_max_records: 1024
@@ -13,45 +18,3 @@ mock:
   message: mock UAV task finished
   ready: true
   hold_success: true
-ego_swarm:
-  # 空 namespace = 本机无前缀话题（与 MAVROS /mavros/* 一致，机间靠 bridge 源前缀）
-  namespace: ""
-  # 任务执行超时（DRIVER_TIMEOUT 兜底；launch 层 uav_task_timeout_s 覆盖）
-  task_timeout_s: 200.0
-  min_center_distance_m: 1.0
-  position_tolerance_m: 0.2
-  arrival_stable_s: 1.0
-  pose_timeout_s: 1.0
-  # 可选：配置后 END gate 额外要求 MAVROS connected/fresh/stably-disarmed
-  mavros_state_topic: ""
-  # Follower PI: 位置偏差 PI 控制输出 setpoint 补偿量（按周期换算）
-  follower_p_gain: 1.0
-  follower_i_gain: 0.1
-  follower_limit_xy: 2.0
-  follower_limit_z: 1.0
-  # 方案 B（min-snap 重构）：命令分层高度（MOVE_TO 15m / FOLLOW_ROUTE 12m / FAULT_EXIT 8m）
-  # 与航点密化最大间距：上层生成含动作分层关键点（含当前位置 start）并按最大
-  # 2m 间距密化后发布 waypoints（仅作 C++ 窗口推进/末点参考，不进 B-spline；
-  # B-spline 初始 point_set 由 C++ min-snap 单段按 0.4m 弧长等距采样生成）
-  layer_move_to: 15.0
-  layer_follow_route: 12.0
-  layer_fault_exit: 8.0
-  layer_tolerance_m: 0.5
-  waypoint_densify_spacing: 2.0
-  # follower PI 候选话题（PositionTarget mask 2496），relay 仲裁的唯一输入之一
-  follower_setpoint_topic: /setpoint/follower
-mavros_position:
-  namespace: /mavros
-  frame_id: map
-  setpoint_rate_hz: 30.0
-  pose_timeout_s: 0.5
-  # MAVROS state 消息过期超时（legacy 兼容 driver，与 ego_swarm 的 task_timeout_s 语义无关）
-  state_timeout_s: 1.0
-  position_tolerance_m: 0.20
-  yaw_tolerance_rad: 0.15
-  settle_duration_s: 1.0
-  require_connected: true
-  require_armed: false
-  require_offboard: false
-  auto_arm: false
-  auto_offboard: false

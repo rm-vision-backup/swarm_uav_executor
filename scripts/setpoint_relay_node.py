@@ -22,12 +22,22 @@ PositionTarget 候选；本节点仲裁、校验、失效 HOLD，并以固定频
 
 from __future__ import annotations
 
+import math
+
 import rospy
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import PositionTarget
 from std_msgs.msg import Bool
 
 from swarm_uav_executor.setpoint_relay import SetpointRelay
+
+
+def _finite_positive(value, name):
+    value = float(value)
+    if not math.isfinite(value) or value <= 0.0:
+        rospy.logfatal("%s=%r invalid (must be finite >0); refusing to start", name, value)
+        raise ValueError(f"{name} must be finite and >0")
+    return value
 
 
 def main() -> None:
@@ -37,9 +47,13 @@ def main() -> None:
     mode_topic = rospy.get_param("~mode_topic", "/direct_control_active")
     pose_topic = rospy.get_param("~local_pose_topic", "/mavros/local_position/pose")
     output_topic = rospy.get_param("~output_topic", "/mavros/setpoint_raw/local")
-    rate_hz = rospy.get_param("~rate_hz", 30.0)
-    candidate_timeout_s = rospy.get_param("~candidate_timeout_s", 0.2)
-    local_pose_timeout_s = rospy.get_param("~local_pose_timeout_s", 1.0)
+    # 冻结契约校验（implementation_plan_26082916 §5.4）：finite/正数 fail-fast，
+    # 不静默 clamp（非法 rate 会破坏 30Hz 唯一发布契约）。
+    rate_hz = _finite_positive(rospy.get_param("~rate_hz", 30.0), "rate_hz")
+    candidate_timeout_s = _finite_positive(
+        rospy.get_param("~candidate_timeout_s", 0.2), "candidate_timeout_s")
+    local_pose_timeout_s = _finite_positive(
+        rospy.get_param("~local_pose_timeout_s", 1.0), "local_pose_timeout_s")
 
     relay = SetpointRelay(candidate_timeout_s, local_pose_timeout_s)
     pub = rospy.Publisher(output_topic, PositionTarget, queue_size=1)

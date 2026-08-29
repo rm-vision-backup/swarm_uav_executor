@@ -5,7 +5,8 @@
   <arg name="state_topic" default="/$(arg service_namespace)/uav_task_state" />
   <arg name="interfaces_version" default="deployment-unset" />
   <arg name="neighbor_intents" default="" />
-  <!-- 主动 rebound 默认关闭；仅允许测试/诊断 launch 显式覆盖。 -->
+  <!-- 主动 rebound 默认关闭（planner_defaults.yaml enable_rebound=false）；仅允许测试/诊断
+       launch 显式覆盖为 true。 -->
   <arg name="enable_rebound" default="false" />
   <arg name="mavros_state_topic" default="/mavros/state" />
   <!-- 编队槽位: YAML 字典 uav_id -> [x, y, z]（ENU，相对 leader），可空 -->
@@ -32,72 +33,20 @@
 
   <node pkg="ego_planner_driver" type="ego_planner_driver_node"
         name="ego_planner_driver" output="screen">
+    <!-- canonical 三份配置（与 standalone ego_planner_driver.launch 同一来源）：
+         业务默认一律来自 YAML；此处仅 identity/path/明确 deployment override。 -->
+    <rosparam command="load" file="$(find ego_planner_driver)/config/planner_defaults.yaml" />
+    <rosparam command="load" file="$(find ego_planner_driver)/config/safety_defaults.yaml" />
+    <rosparam command="load" file="$(find ego_planner_driver)/config/resource_limits.yaml" />
     <param name="uav_id" value="$(arg uav_id)" />
     <param name="exec_target" value="$(arg exec_target)" />
     <param name="frame_id" value="map" />
-    <param name="ts" value="0.4" />
-    <param name="setpoint_rate_hz" value="30.0" />
-    <param name="max_vel" value="1.0" />
-    <param name="local_pose_timeout_s" value="1.0" />
-    <param name="arrival_stable_s" value="1.0" />
-    <param name="swarm_clearance" value="0.5" />
-    <param name="lambda_swarm" value="1.0" />
-    <param name="enable_rebound" value="$(arg enable_rebound)" />
-    <param name="lambda_smooth" value="1.0" />
-    <!-- 资源安全边界（implementation_plan_26082722 §11）：node 启动时 fail-fast 校验。 -->
-    <param name="max_arc_samples" value="4096" />
-    <param name="max_parameterization_points" value="256" />
-    <param name="max_trajectory_samples" value="4096" />
-    <param name="max_neighbor_intent_samples" value="256" />
-    <param name="segment_direction_epsilon_m" value="0.05" />
-    <param name="replan_period_s" value="1.0" />
-    <param name="no_replan_thresh_m" value="1.0" />
-    <!-- plan-exec A/B/C 分支阈值（implementation_plan_26082621）：到当前目标
-         <0.5m 切下一关键点、推进最远 3.5m、到达最终关键点 <0.5m → COMPLETED
-         （0.5m 为 260828 用户决策：15 机 prepare 实测终点偏差 0.29m 需覆盖）。 -->
-    <param name="reach_thresh_m" value="0.5" />
-    <param name="max_advance_dist_m" value="3.5" />
-    <param name="arrival_reach_thresh_m" value="0.5" />
+    <param name="setpoint_out_topic" value="/setpoint/ego" />
     <param name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
-    <param name="safety_supervisor_rate_hz" value="25.0" />
-    <!-- 周期碰撞检查：10Hz，本机轨迹 vs fresh 邻机轨迹，< 固定 clearance → replan
-         （implementation_plan_26082602；intent 生成即发，无周期 5Hz 刷新）。 -->
-    <param name="collision_check_rate_hz" value="10.0" />
-    <param name="bias_valid_s" value="120.0" />
-    <param name="safety_prediction_horizon_s" value="5.0" />
-    <param name="safety_sample_period_s" value="0.05" />
-    <param name="protected_distance_m" value="1.0" />
-    <param name="safety_control_delay_s" value="0.20" />
-    <param name="safety_compute_budget_s" value="0.05" />
-    <param name="peer_data_age_cap_s" value="2.0" />
-    <param name="emergency_decel_mps2" value="2.0" />
-    <param name="warning_buffer_m" value="0.35" />
-    <param name="emergency_buffer_m" value="0.10" />
-    <param name="warning_ttc_s" value="3.0" />
-    <param name="emergency_ttc_s" value="1.5" />
-    <param name="minimum_prediction_window_s" value="0.25" />
-    <param name="safety_episode_release_s" value="1.0" />
-    <!-- 对齐原版 fsm/emergency_time=1.0s：EMERGENCY 先尝试重规划，预测越界
-         (ttc) 小于该值才立即受约束制动，否则交常规 replanLoop。 -->
-    <param name="emergency_replan_time_s" value="1.0" />
-    <!-- 机间让路候选（SLOW/LEFT/RIGHT + right-of-way，implementation_plan_26082602 §10）：
-         collisionCheckTick 检测冲突（min_clear < 1.2×clearance，yield_clearance_factor=1.2）
-         → 本机 YIELD（ID 小于 primary peer）生成候选，cost 最小者提交。 -->
-    <param name="enable_yield_candidates" value="true" />
-    <param name="yield_clearance_factor" value="1.2" />
-    <param name="yield_lateral_max_m" value="2.2" />
-    <param name="yield_slow_min_scale" value="0.3" />
-    <!-- 候选/加速档最大速度上限（26082621 迭代）：2.5 写在本驱动，独立于制动
-         （emergency_max_velocity_mps=1.5 保持）；与测试判定一致。 -->
-    <param name="yield_max_velocity_mps" value="2.5" />
-    <!-- 对齐原版 SEQUENTIAL_START：首轮规划前等待前驱无人机 intent 超时（防
-         前驱缺失/失联时永久阻塞）；默认 10s。 -->
-    <param name="first_plan_wait_timeout_s" value="10.0" />
-    <param name="neighbor_stale_policy" value="diagnose_only" />
-    <param name="neighbor_intent_stale_s" value="2.0" />
-    <param name="neighbor_missing_policy" value="continue_after_barrier" />
     <param name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
     <param name="diagnostic_log_queue_size" value="2048" />
+    <!-- enable_rebound 为诊断/测试 deployment override（canonical 默认 false）。 -->
+    <param name="enable_rebound" value="$(arg enable_rebound)" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
@@ -118,6 +67,7 @@
     <param name="mode_topic" value="/direct_control_active" />
     <param name="local_pose_topic" value="/mavros/local_position/pose" />
     <param name="output_topic" value="/mavros/setpoint_raw/local" />
+    <!-- 冻结契约：relay 30Hz、candidate timeout 0.2s、pose timeout 1.0s。 -->
     <param name="rate_hz" value="30.0" />
     <param name="candidate_timeout_s" value="0.2" />
     <param name="local_pose_timeout_s" value="1.0" />
@@ -125,7 +75,9 @@
 
   <node pkg="swarm_uav_executor" type="uav_executor_node.py"
         name="uav_executor_$(arg uav_id)" output="screen" required="true">
+    <!-- 通用 executor 默认 + EGO driver 默认（canonical YAML）；launch 仅 deployment override。 -->
     <rosparam command="load" file="$(find swarm_uav_executor)/config/executor_defaults.yaml" />
+    <rosparam command="load" file="$(find swarm_uav_executor)/config/ego_swarm_defaults.yaml" />
     <param name="uav_id" value="$(arg uav_id)" />
     <param name="exec_target" value="$(arg exec_target)" />
     <param name="service_namespace" value="$(arg service_namespace)" />
@@ -136,25 +88,13 @@
     <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
     <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）独立于任务执行超时 -->
     <param name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
-    <param name="ego_swarm/namespace" value="" />
+    <!-- deployment override（YAML 已含默认）：任务超时、邻机 intent、编队、PX4 参数策略 -->
     <param name="ego_swarm/task_timeout_s" value="$(arg uav_task_timeout_s)" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
     <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
     <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
     <param name="ego_swarm/leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <param name="ego_swarm/neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
-    <!-- 方案 B（min-snap 重构）：命令分层高度与航点密化间距（3m 密化关键点仅作
-         plan-exec 相邻目标推进/末点参考，不进 B-spline；对齐原版 keypoints 间距）。 -->
-    <param name="ego_swarm/layer_move_to" value="15.0" />
-    <param name="ego_swarm/layer_follow_route" value="12.0" />
-    <param name="ego_swarm/layer_fault_exit" value="8.0" />
-    <param name="ego_swarm/layer_tolerance_m" value="0.5" />
-    <param name="ego_swarm/waypoint_densify_spacing" value="3.0" />
-    <param name="ego_swarm/follower_setpoint_topic" value="/setpoint/follower" />
-    <!-- No-RC SITL policy is explicit and must not be enabled by real-vehicle defaults. -->
     <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" />
-    <param name="ego_swarm/px4_param_set_timeout_s" value="5.0" />
-    <param name="ego_swarm/com_rcl_except" value="4" />
-    <param name="ego_swarm/nav_rcl_act" value="0" />
   </node>
 </launch>

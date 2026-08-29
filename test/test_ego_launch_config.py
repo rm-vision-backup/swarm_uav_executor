@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Static regression tests for safety-sensitive EGO launch arguments."""
+"""Static regression tests for safety-sensitive EGO launch + canonical YAML wiring.
+
+implementation_plan_26082916 §5/§9：业务默认唯一来源为 canonical YAML
+（planner_defaults/safety_defaults/resource_limits/ego_swarm_defaults）；launch 只保留
+identity/path/明确 deployment override，且不再声明未实现的 neighbor_stale_policy/
+neighbor_missing_policy 假配置。
+"""
 from pathlib import Path
 import unittest
 import xml.etree.ElementTree as ET
@@ -8,69 +14,101 @@ import yaml
 
 
 LAUNCH = Path(__file__).resolve().parents[1] / "launch" / "uav_executor_ego.launch"
-DEFAULTS = Path(__file__).resolve().parents[1] / "config" / "executor_defaults.yaml"
+EXECUTOR_DEFAULTS = Path(__file__).resolve().parents[1] / "config" / "executor_defaults.yaml"
+EGO_DEFAULTS = Path(__file__).resolve().parents[1] / "config" / "ego_swarm_defaults.yaml"
+
+# planner canonical 文件在 ego_planner_driver 包（同一工作区 sibling）
+_PKG = Path(__file__).resolve().parents[2]
+PLANNER_DEFAULTS = _PKG / "ego_planner_driver" / "config" / "planner_defaults.yaml"
+SAFETY_DEFAULTS = _PKG / "ego_planner_driver" / "config" / "safety_defaults.yaml"
+RESOURCE_LIMITS = _PKG / "ego_planner_driver" / "config" / "resource_limits.yaml"
+
+
+def _load_yaml(path):
+    with path.open(encoding="utf-8") as stream:
+        return yaml.safe_load(stream)
 
 
 class EgoLaunchConfigTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = ET.parse(str(LAUNCH)).getroot()
+        cls.planner = next(node for node in cls.root.findall("node")
+                           if node.attrib.get("name") == "ego_planner_driver")
+        cls.planner_params = {item.attrib["name"]: item.attrib.get("value")
+                              for item in cls.planner.findall("param")}
+        cls.executor = next(node for node in cls.root.findall("node")
+                            if node.attrib.get("type") == "uav_executor_node.py")
+        cls.executor_params = {item.attrib["name"]: item.attrib.get("value")
+                               for item in cls.executor.findall("param")}
+        cls.args = {item.attrib["name"]: item.attrib.get("default")
+                    for item in cls.root.findall("arg")}
+        cls.pd = _load_yaml(PLANNER_DEFAULTS)
+        cls.sd = _load_yaml(SAFETY_DEFAULTS)
+        cls.rl = _load_yaml(RESOURCE_LIMITS)
+        cls.eg = _load_yaml(EGO_DEFAULTS)["ego_swarm"]
 
     def test_rebound_is_opt_in_and_forwarded_to_planner(self):
-        args = {item.attrib["name"]: item.attrib.get("default")
-                for item in self.root.findall("arg")}
-        self.assertEqual(args.get("enable_rebound"), "false")
-        planner = next(node for node in self.root.findall("node")
-                       if node.attrib.get("name") == "ego_planner_driver")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in planner.findall("param")}
-        self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
+        self.assertEqual(self.args.get("enable_rebound"), "false")
+        self.assertEqual(self.planner_params.get("enable_rebound"),
+                         "$(arg enable_rebound)")
+        self.assertIs(self.pd["enable_rebound"], False)
 
     def test_neighbor_intents_reach_executor_private_params(self):
-        args = {item.attrib["name"]: item.attrib.get("default")
-                for item in self.root.findall("arg")}
-        self.assertEqual(args.get("neighbor_intents"), "")
-        executor = next(node for node in self.root.findall("node")
-                        if node.attrib.get("type") == "uav_executor_node.py")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in executor.findall("param")}
-        self.assertEqual(params.get("ego_swarm/neighbor_intents"),
+        self.assertEqual(self.args.get("neighbor_intents"), "")
+        self.assertEqual(self.executor_params.get("ego_swarm/neighbor_intents"),
                          "$(arg neighbor_intents)")
 
     def test_predictive_supervisor_is_active_and_logs_in_workspace(self):
-        args = {item.attrib["name"]: item.attrib.get("default")
-                for item in self.root.findall("arg")}
-        self.assertEqual(args.get("safety_supervisor_mode"), "active")
-        self.assertTrue(args.get("diagnostic_log_dir", "").endswith(
+        self.assertEqual(self.args.get("safety_supervisor_mode"), "active")
+        self.assertTrue(self.args.get("diagnostic_log_dir", "").endswith(
             "/runtime_logs/ego_planner"))
-        planner = next(node for node in self.root.findall("node")
-                       if node.attrib.get("name") == "ego_planner_driver")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in planner.findall("param")}
-        self.assertEqual(params.get("safety_supervisor_mode"),
+        self.assertEqual(self.planner_params.get("safety_supervisor_mode"),
                          "$(arg safety_supervisor_mode)")
-        self.assertEqual(params.get("neighbor_stale_policy"), "diagnose_only")
-        self.assertEqual(params.get("neighbor_missing_policy"),
-                         "continue_after_barrier")
-        # L3 精简删除 negotiation 参数；26082602 §10 恢复 enable_yield_candidates
-        # （SLOW/LEFT/RIGHT 让路候选 + right-of-way）；26082621 迭代新增独立速度上限。
-        self.assertNotIn("intent_negotiation_wait_s", params)
-        self.assertEqual(params.get("enable_yield_candidates"), "true")
-        self.assertEqual(params.get("yield_clearance_factor"), "1.2")
-        self.assertEqual(params.get("yield_lateral_max_m"), "2.2")
-        self.assertEqual(params.get("yield_max_velocity_mps"), "2.5")
-        self.assertEqual(params.get("collision_check_rate_hz"), "10.0")
-        self.assertEqual(params.get("enable_rebound"), "$(arg enable_rebound)")
-        # 资源安全边界（implementation_plan_26082722 §11）：生产 limits 参数存在
-        # 且被 C++ 节点读取（node 侧 fail-fast；此处静态断言值一致）。
-        self.assertEqual(params.get("max_arc_samples"), "4096")
-        self.assertEqual(params.get("max_parameterization_points"), "256")
-        self.assertEqual(params.get("max_trajectory_samples"), "4096")
-        self.assertEqual(params.get("max_neighbor_intent_samples"), "256")
-        self.assertEqual(params.get("segment_direction_epsilon_m"), "0.05")
-        # 冻结频率契约：planner candidate-publication 与 setpoint-relay 均为 30Hz，
-        # relay candidate timeout 0.2s（不随 OOM 修复改变）。
-        self.assertEqual(params.get("setpoint_rate_hz"), "30.0")
+        self.assertEqual(self.sd["safety_supervisor_mode"], "active")
+
+    def test_no_fake_stale_policy_params_in_launch(self):
+        # 26082916 §4：neighbor_stale_policy/neighbor_missing_policy 为从未被源码
+        # 读取的假配置，已从 launch 删除；neighbor_intent_stale_s 接入实际 stale 判断。
+        self.assertNotIn("neighbor_stale_policy", self.planner_params)
+        self.assertNotIn("neighbor_missing_policy", self.planner_params)
+        self.assertNotIn("neighbor_stale_policy", self.pd)
+        self.assertNotIn("neighbor_missing_policy", self.pd)
+        self.assertEqual(self.sd["neighbor_intent_stale_s"], 30.0)
+
+    def test_planner_business_params_come_from_canonical_yaml(self):
+        # launch 不再重复业务默认（仅 identity/path/明确 override 内联）。
+        allowed_planner_params = {
+            "uav_id", "exec_target", "frame_id", "setpoint_out_topic",
+            "safety_supervisor_mode", "diagnostic_log_dir",
+            "diagnostic_log_queue_size", "enable_rebound",
+        }
+        self.assertTrue(allowed_planner_params.issuperset(self.planner_params.keys()))
+        # 冻结契约/阈值来自 canonical YAML：
+        self.assertEqual(self.pd["enable_yield_candidates"], True)
+        self.assertEqual(self.pd["yield_clearance_factor"], 1.2)
+        self.assertEqual(self.pd["yield_lateral_max_m"], 2.2)
+        self.assertEqual(self.pd["yield_max_velocity_mps"], 2.5)
+        self.assertEqual(self.pd["reach_thresh_m"], 0.5)
+        self.assertEqual(self.pd["max_advance_dist_m"], 3.5)
+        self.assertEqual(self.pd["arrival_reach_thresh_m"], 0.5)
+        self.assertEqual(self.pd["setpoint_rate_hz"], 30.0)
+        self.assertEqual(self.sd["collision_check_rate_hz"], 10.0)
+        self.assertEqual(self.sd["protected_distance_m"], 1.0)
+        self.assertEqual(self.rl["max_arc_samples"], 4096)
+        self.assertEqual(self.rl["max_parameterization_points"], 256)
+        self.assertEqual(self.rl["max_trajectory_samples"], 4096)
+        self.assertEqual(self.rl["max_neighbor_intent_samples"], 256)
+        self.assertEqual(self.rl["segment_direction_epsilon_m"], 0.05)
+
+    def test_launch_planner_has_canonical_rosparam_loads(self):
+        loads = [item.attrib.get("file", "") for item in self.planner.findall("rosparam")
+                 if item.attrib.get("command") == "load"]
+        self.assertTrue(any("planner_defaults.yaml" in f for f in loads))
+        self.assertTrue(any("safety_defaults.yaml" in f for f in loads))
+        self.assertTrue(any("resource_limits.yaml" in f for f in loads))
+
+    def test_relay_contract_params(self):
         relay = next(node for node in self.root.findall("node")
                      if node.attrib.get("name") == "setpoint_relay")
         relay_params = {item.attrib["name"]: item.attrib.get("value")
@@ -81,47 +119,34 @@ class EgoLaunchConfigTest(unittest.TestCase):
                          "/mavros/setpoint_raw/local")
 
     def test_executor_defaults_use_single_3d_center_distance(self):
-        with DEFAULTS.open(encoding="utf-8") as stream:
-            ego_swarm = yaml.safe_load(stream)["ego_swarm"]
-        self.assertEqual(ego_swarm.get("min_center_distance_m"), 1.0)
-        self.assertNotIn("min_horizontal_distance_m", ego_swarm)
-        self.assertNotIn("min_vertical_distance_m", ego_swarm)
+        self.assertEqual(self.eg.get("min_center_distance_m"), 1.0)
+        self.assertNotIn("min_horizontal_distance_m", self.eg)
+        self.assertNotIn("min_vertical_distance_m", self.eg)
 
-    def test_waypoint_densify_spacing_is_3m(self):
-        # implementation_plan_26082621：分层关键点按 3m 间距密化后发布 /waypoints，
-        # C++ plan-exec 用"相邻下一个 keypoint"推进（无 horizon 窗口滚动）。
-        executor = next(node for node in self.root.findall("node")
-                        if node.attrib.get("type") == "uav_executor_node.py")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in executor.findall("param")}
-        self.assertEqual(params.get("ego_swarm/waypoint_densify_spacing"), "3.0")
-        # plan-exec A/B/C 分支阈值参数已下发 C++ 节点（launch 静态断言）。
-        planner = next(node for node in self.root.findall("node")
-                       if node.attrib.get("name") == "ego_planner_driver")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in planner.findall("param")}
-        self.assertEqual(params.get("reach_thresh_m"), "0.5")
-        self.assertEqual(params.get("max_advance_dist_m"), "3.5")
-        self.assertEqual(params.get("arrival_reach_thresh_m"), "0.5")
-        # horizon 窗口滚动已删除：launch 不应再下发 planning_horizon/position_tolerance_m。
-        self.assertNotIn("planning_horizon", params)
-        self.assertNotIn("position_tolerance_m", params)
+    def test_waypoint_densify_spacing_authoritative_3m_in_yaml_only(self):
+        # authoritative default 3.0 唯一来源为 ego_swarm_defaults.yaml；launch 不再重复。
+        self.assertEqual(self.eg.get("waypoint_densify_spacing"), 3.0)
+        self.assertNotIn("ego_swarm/waypoint_densify_spacing", self.executor_params)
+
+    def test_launch_executor_has_canonical_rosparam_loads(self):
+        loads = [item.attrib.get("file", "") for item in self.executor.findall("rosparam")
+                 if item.attrib.get("command") == "load"]
+        self.assertTrue(any("executor_defaults.yaml" in f for f in loads))
+        self.assertTrue(any("ego_swarm_defaults.yaml" in f for f in loads))
 
     def test_state_transition_timeout_decoupled_from_execution_timeout(self):
-        args = {item.attrib["name"]: item.attrib.get("default")
-                for item in self.root.findall("arg")}
-        self.assertEqual(args.get("uav_task_timeout_s"), "200.0")
-        self.assertEqual(args.get("ego_hold_timeout_s"), "2.0")
-        executor = next(node for node in self.root.findall("node")
-                        if node.attrib.get("type") == "uav_executor_node.py")
-        params = {item.attrib["name"]: item.attrib.get("value")
-                  for item in executor.findall("param")}
-        # 任务执行超时（DRIVER_TIMEOUT 兜底）与 ego HOLD/收口超时（HOLD 确认）
-        # 各自独立上层输入，互不引用。
-        self.assertEqual(params.get("ego_swarm/task_timeout_s"),
+        self.assertEqual(self.args.get("uav_task_timeout_s"), "200.0")
+        self.assertEqual(self.args.get("ego_hold_timeout_s"), "2.0")
+        self.assertEqual(self.executor_params.get("ego_swarm/task_timeout_s"),
                          "$(arg uav_task_timeout_s)")
-        self.assertEqual(params.get("ego_hold_timeout_s"),
+        self.assertEqual(self.executor_params.get("ego_hold_timeout_s"),
                          "$(arg ego_hold_timeout_s)")
+
+    def test_executor_defaults_no_ego_or_mavros_sections(self):
+        # 26082916 §5：executor_defaults.yaml 只保留通用 executor 参数。
+        data = _load_yaml(EXECUTOR_DEFAULTS)
+        self.assertNotIn("ego_swarm", data)
+        self.assertNotIn("mavros_position", data)
 
 
 if __name__ == "__main__":

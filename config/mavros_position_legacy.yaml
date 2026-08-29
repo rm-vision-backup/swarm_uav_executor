@@ -1,0 +1,18 @@
+# legacy MAVROS position driver 参数 canonical 默认（implementation_plan_26082916 §5）。
+# 从 executor_defaults.yaml 迁移（该文件只保留通用 executor 参数）。
+# 加载方式：uav_executor_mavros.launch rosparam load，顶层键 mavros_position:，
+# load 后成为 ~/mavros_position/*。require_* 为实验/实机部署入口（launch override）。
+mavros_position:
+  namespace: /mavros
+  frame_id: map
+  setpoint_rate_hz: 30.0
+  pose_timeout_s: 0.5
+  state_timeout_s: 1.0
+  position_tolerance_m: 0.2
+  yaw_tolerance_rad: 0.15
+  settle_duration_s: 1.0
+  require_connected: true
+  require_armed: false
+  require_offboard: false
+  auto_arm: false
+  auto_offboard: false

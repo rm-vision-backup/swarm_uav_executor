@@ -11,14 +11,18 @@
   <node pkg="swarm_uav_executor" type="uav_executor_node.py"
         name="uav_executor_$(arg uav_id)" output="screen" required="true">
     <rosparam command="load" file="$(find swarm_uav_executor)/config/executor_defaults.yaml" />
+    <rosparam command="load" file="$(find swarm_uav_executor)/config/mavros_position_legacy.yaml" />
     <param name="uav_id" value="$(arg uav_id)" />
     <param name="exec_target" value="$(arg exec_target)" />
     <param name="service_namespace" value="$(arg service_namespace)" />
     <param name="state_topic" value="$(arg state_topic)" />
     <param name="interfaces_version" value="$(arg interfaces_version)" />
     <param name="driver" value="mavros_position" />
+    <!-- legacy 部署 override：namespace/frame_id/require_* 等实验/实机入口 -->
     <param name="mavros_position/namespace" value="$(arg mavros_namespace)" />
     <param name="mavros_position/frame_id" value="$(arg frame_id)" />
+    <param name="mavros_position/require_armed" value="false" />
+    <param name="mavros_position/require_offboard" value="false" />
     <param name="mavros_position/auto_arm" value="false" />
     <param name="mavros_position/auto_offboard" value="false" />
   </node>
