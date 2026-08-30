@@ -1,0 +1,78 @@
+<launch>
+  <!-- 机载层：MAVROS + ego_swarm executor（单仿真无人机）
+       用法（终端 B，各自机载 Master）：
+       export ROS_MASTER_URI=http://localhost:11311
+       export ROS_HOSTNAME=localhost
+       roslaunch swarm_uav_executor uav_offboard_ego.launch uav_name:=UAV1 uav_id:=A01 tgt_system:=1
+  -->
+  <arg name="uav_name" default="" />
+  <arg name="uav_id" default="$(eval arg('uav_name'))" />
+  <arg name="tgt_system" default="1" />
+  <arg name="udp_port" default="$(eval 24540 - 1 + arg('tgt_system'))"/>
+  <arg name="gcs_port" default="$(eval 34580 - 1 + arg('tgt_system'))"/>
+  <arg name="fcu_url" default="udp://:$(arg udp_port)@localhost:$(arg gcs_port)"/>
+  <arg name="neighbor_intents" default="" />
+  <!-- enable_rebound/uav_task_timeout_s/ego_hold_timeout_s/safety_supervisor_mode 业务默认
+       来自 planner/executor/safety canonical YAML；此处 arg 默认空，仅命令行显式传入时透传
+       条件写入，不保存第二套默认（implementation_plan_26083018 §3）。 -->
+  <arg name="enable_rebound" default="" />
+  <arg name="interfaces_version" default="deployment-unset" />
+  <arg name="formation_offsets" default="{}" />
+  <arg name="leader_odom_topic_prefix" default="" />
+  <arg name="neighbor_odom_topics" default="" />
+  <arg name="uav_task_timeout_s" default="" />
+  <arg name="ego_hold_timeout_s" default="" />
+  <arg name="safety_supervisor_mode" default="" />
+  <arg name="diagnostic_log_dir"
+       default="/home/ub20tg/catkin_swarm6-2/runtime_logs/ego_planner" />
+
+  <!-- 1. MAVROS 对接本机 PX4 SITL 实例 -->
+  <include file="$(find mavros)/launch/px4.launch">
+    <arg name="gcs_url" value=""/>
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+    <arg name="tgt_system" value="$(arg tgt_system)"/>
+    <arg name="tgt_component" value="1"/>
+  </include>
+
+  <!-- 2. EGO-Swarm executor（ego driver 集成；arm/OFFBOARD 与 PX4 参数由
+        offboard_takeoff_15_sitl.py 负责，本 launch 不含 watchdog） -->
+  <include file="$(find swarm_uav_executor)/launch/uav_executor_ego.launch">
+    <arg name="uav_id" value="$(arg uav_id)"/>
+    <arg name="exec_target" value="$(arg uav_name)"/>
+    <arg name="service_namespace" value="$(arg uav_name)"/>
+    <arg name="neighbor_intents" value="$(arg neighbor_intents)"/>
+    <arg name="enable_rebound" value="$(arg enable_rebound)"/>
+    <arg name="interfaces_version" value="$(arg interfaces_version)"/>
+    <arg name="formation_offsets" value="$(arg formation_offsets)"/>
+    <arg name="leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)"/>
+    <arg name="neighbor_odom_topics" value="$(arg neighbor_odom_topics)"/>
+    <arg name="uav_task_timeout_s" value="$(arg uav_task_timeout_s)"/>
+    <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)"/>
+    <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)"/>
+    <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)"/>
+    <!-- arm/OFFBOARD and PX4 parameter setup belong to offboard_takeoff_15_sitl.py. -->
+    <arg name="configure_px4_params" value="false" />
+    <!-- 状态发布到全局 uav_task_state，供 swarm_bridge 订阅桥接至 GCS_A -->
+    <arg name="state_topic" value="/uav_task_state" />
+  </include>
+
+  <!-- 3. 拓扑桥接：把本机 mavros_state/uav_task_state/odom 桥到 GCS_A 与其他 UAV
+        （仅桥接，不跑 mock executor，避免与真实 executor 的 Service 冲突） -->
+  <include file="$(find tcp_to_ros)/launch/topology_group_a_sim.launch">
+    <arg name="uav_name" value="$(arg uav_name)"/>
+    <arg name="uav_id" value="$(arg uav_id)"/>
+    <arg name="run_uav_mock" value="false"/>
+  </include>
+
+  <!-- 4. 一次性全局原点设置和 MAVROS 回读确认。 -->
+  <node pkg="swarm_uav_executor" type="gp_origin_receiver.py"
+        name="gp_origin_receiver" output="screen"/>
+
+  <!-- 5. GPS 时钟偏置：订阅 /mavros/time_reference，10s 滑动均值，1Hz 发布 gps_bias
+       （邻机经 bridge 转发，接收端用 T_own = T_other - bias_other + bias_own 修正机间时间戳）。
+       参数唯一来源 gps_bias_defaults.yaml（implementation_plan_26082916 §6）。 -->
+  <node pkg="swarm_uav_executor" type="gps_bias_node.py"
+        name="gps_bias_node" output="screen">
+    <rosparam command="load" file="$(find swarm_uav_executor)/config/gps_bias_defaults.yaml" />
+  </node>
+</launch>

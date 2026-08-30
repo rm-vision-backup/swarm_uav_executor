@@ -2,19 +2,22 @@
 # EGO 参数已迁移到 ego_swarm_defaults.yaml（~ego_swarm/*）；legacy MAVROS 参数已迁移到
 # mavros_position_legacy.yaml（~mavros_position/*）。本文件只保留驱动无关的通用参数。
 # uav_executor_mock.launch / uav_executor_ego.launch / uav_executor_mavros.launch 均加载。
+# 加载方式：uav_executor_node 私有 namespace（~）。
+# 语义（单位见注释）。
 
-driver: mock
-store_ttl_s: 3600.0
-store_max_records: 1024
-terminal_republish_count: 3
-terminal_republish_interval_s: 0.2
+driver: mock                            # 默认驱动（enum {mock,ego_swarm,mavros_position}）：launch 按入口覆盖
+store_ttl_s: 3600.0                     # 任务记录保存时长（s，>0）：task store 记录 TTL
+store_max_records: 1024                 # 任务记录最大条数（int，>0）：task store 环形上限
+terminal_republish_count: 3             # 终端状态补发次数（int，>=0）：terminal 状态重复发布次数
+terminal_republish_interval_s: 0.2      # 终端状态补发间隔（s，>0）：terminal 状态重复发布周期
 # 本机 ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join），与任务执行超时
 # ego_swarm.task_timeout_s(200s) 完全独立；launch 层用 ego_hold_timeout_s 覆盖
-ego_hold_timeout_s: 2.0
-mock:
-  result_delay_s: 0.5
-  final_success: true
-  error_code: ""
-  message: mock UAV task finished
-  ready: true
-  hold_success: true
+ego_hold_timeout_s: 2.0                 # ego HOLD/收口超时（s，>0）：HOLD 确认/失败回退/shutdown join 独立窗口
+mock:                                   # mock 驱动参数段（~mock/*）：MockDriver 读取
+  result_delay_s: 0.5                   # mock 驱动结果延迟（s，>0）：模拟任务完成后上报延迟
+  final_success: true                   # mock 驱动最终结果（bool）：模拟任务成功/失败
+  error_code: ""                        # mock 驱动错误码（str）：失败时上报的 error_code
+  message: mock UAV task finished       # mock 驱动结果消息（str）：失败/成功说明
+  ready: true                           # mock 驱动就绪状态（bool）：是否立即就绪
+  hold_success: true                    # mock 驱动 HOLD 响应（bool）：HOLD 是否成功
+

@@ -11,6 +11,8 @@
   <depend>mavros_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>swarm_uav_interfaces</depend>
   <depend>tf</depend>
   <test_depend>rostest</test_depend>

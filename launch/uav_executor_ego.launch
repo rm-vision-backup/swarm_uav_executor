@@ -5,24 +5,27 @@
   <arg name="state_topic" default="/$(arg service_namespace)/uav_task_state" />
   <arg name="interfaces_version" default="deployment-unset" />
   <arg name="neighbor_intents" default="" />
-  <!-- 主动 rebound 默认关闭（planner_defaults.yaml enable_rebound=false）；仅允许测试/诊断
-       launch 显式覆盖为 true。 -->
-  <arg name="enable_rebound" default="false" />
+  <!-- 主动 rebound 业务默认来自 planner_defaults.yaml（enable_rebound=false）；arg 默认空，
+       仅测试/诊断 launch 显式覆盖为 true 时条件写入（implementation_plan_26083018 §3）。 -->
+  <arg name="enable_rebound" default="" />
   <arg name="mavros_state_topic" default="/mavros/state" />
   <!-- 编队槽位: YAML 字典 uav_id -> [x, y, z]（ENU，相对 leader），可空 -->
   <arg name="formation_offsets" default="{}" />
   <!-- leader odom 话题前缀: 如空则自动按 /<leader>/mavros/local_position/odom 构造 -->
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
-  <arg name="configure_px4_params" default="false" />
-  <!-- 任务执行超时（DRIVER_TIMEOUT 兜底）：长任务（15 分钟级覆盖航线）需延长
-       terminal exec_state 等待窗口；默认 200s，长航线启动时经上层 launch 覆盖。 -->
-  <arg name="uav_task_timeout_s" default="200.0" />
-  <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）：与任务执行超时
-       uav_task_timeout_s 完全独立；默认 2s，可在上层 launch 覆盖。 -->
-  <arg name="ego_hold_timeout_s" default="2.0" />
-  <!-- Predictive safety supervision is active by default; diagnostics may override it. -->
-  <arg name="safety_supervisor_mode" default="active" />
+  <!-- configure_px4_params 业务默认来自 ego_swarm_defaults.yaml（false）；launch arg 默认空，
+       仅命令行显式传入时条件写入（PX4 参数由 takeoff 脚本负责）。 -->
+  <arg name="configure_px4_params" default="" />
+  <!-- 任务执行超时（DRIVER_TIMEOUT 兜底）：业务默认来自 ego_swarm_defaults.yaml
+       (task_timeout_s=200.0)；arg 默认空，长任务由上层 launch 显式覆盖。 -->
+  <arg name="uav_task_timeout_s" default="" />
+  <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）：业务默认来自
+       executor_defaults.yaml（ego_hold_timeout_s=2.0）；arg 默认空，可在上层 launch 覆盖。 -->
+  <arg name="ego_hold_timeout_s" default="" />
+  <!-- Predictive safety supervision 业务默认来自 safety_defaults.yaml（active）；arg 默认空，
+       仅命令行显式覆盖时条件写入（诊断可 shadow/off）。 -->
+  <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
        default="/home/ub20tg/catkin_swarm6-2/runtime_logs/ego_planner" />
 
@@ -42,11 +45,11 @@
     <param name="exec_target" value="$(arg exec_target)" />
     <param name="frame_id" value="map" />
     <param name="setpoint_out_topic" value="/setpoint/ego" />
-    <param name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
+    <param name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" if="$(eval arg('safety_supervisor_mode') != '')" />
     <param name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
     <param name="diagnostic_log_queue_size" value="2048" />
-    <!-- enable_rebound 为诊断/测试 deployment override（canonical 默认 false）。 -->
-    <param name="enable_rebound" value="$(arg enable_rebound)" />
+    <!-- enable_rebound 为诊断/测试 deployment override（canonical 默认 false，见 planner_defaults.yaml）。 -->
+    <param name="enable_rebound" value="$(arg enable_rebound)" if="$(eval arg('enable_rebound') != '')" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
@@ -86,15 +89,16 @@
     <param name="driver" value="ego_swarm" />
     <param name="require_explicit_start" value="true" />
     <rosparam param="supported_commands">[MOVE_TO, FOLLOW_ROUTE, FAULT_EXIT, HOVER]</rosparam>
-    <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）独立于任务执行超时 -->
-    <param name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
+    <!-- ego HOLD/收口超时（HOLD 确认、任务失败回退、shutdown join）独立于任务执行超时；
+         canonical 默认 2.0（executor_defaults.yaml），仅显式传入时条件写入。 -->
+    <param name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" if="$(eval arg('ego_hold_timeout_s') != '')" />
     <!-- deployment override（YAML 已含默认）：任务超时、邻机 intent、编队、PX4 参数策略 -->
-    <param name="ego_swarm/task_timeout_s" value="$(arg uav_task_timeout_s)" />
+    <param name="ego_swarm/task_timeout_s" value="$(arg uav_task_timeout_s)" if="$(eval arg('uav_task_timeout_s') != '')" />
     <param name="ego_swarm/neighbor_intents" value="$(arg neighbor_intents)" />
     <param name="ego_swarm/mavros_state_topic" value="$(arg mavros_state_topic)" />
     <rosparam param="ego_swarm/formation_offsets" subst_value="true">$(arg formation_offsets)</rosparam>
     <param name="ego_swarm/leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <param name="ego_swarm/neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
-    <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" />
+    <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" if="$(eval arg('configure_px4_params') != '')" />
   </node>
 </launch>

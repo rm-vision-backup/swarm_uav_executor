@@ -1,0 +1,8 @@
+# GPS 时钟偏置节点参数 canonical 默认（implementation_plan_26082916 §6）。
+# 唯一来源：gps_bias_defaults.yaml（launch 不保存第二套默认）。
+# 加载方式：uav_offboard_ego.launch rosparam load 到 gps_bias_node 私有 namespace。
+# 校验：所有 double finite；window_s/publish_rate_hz >0；lockout_s >=0；非法 fail-fast。
+
+window_s: 10.0          # 滑动均值窗口（s，>0）：bias 估计窗口长度
+publish_rate_hz: 1.0    # 发布频率（Hz，>0）：gps_bias 话题发布速率
+lockout_s: 3.0          # GPS 失锁阈值（s，>=0）：超时无 time_reference 则停发新值

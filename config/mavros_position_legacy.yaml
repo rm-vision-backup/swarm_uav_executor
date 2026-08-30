@@ -2,17 +2,19 @@
 # 从 executor_defaults.yaml 迁移（该文件只保留通用 executor 参数）。
 # 加载方式：uav_executor_mavros.launch rosparam load，顶层键 mavros_position:，
 # load 后成为 ~/mavros_position/*。require_* 为实验/实机部署入口（launch override）。
-mavros_position:
-  namespace: /mavros
-  frame_id: map
-  setpoint_rate_hz: 30.0
-  pose_timeout_s: 0.5
-  state_timeout_s: 1.0
-  position_tolerance_m: 0.2
-  yaw_tolerance_rad: 0.15
-  settle_duration_s: 1.0
-  require_connected: true
-  require_armed: false
-  require_offboard: false
-  auto_arm: false
-  auto_offboard: false
+# 语义（单位见注释）。
+mavros_position:                        # legacy MAVROS position driver 参数段（~mavros_position/*）
+  namespace: /mavros                  # MAVROS namespace（str）：部署 override 入口
+  frame_id: map                       # 位置参考系（str）：部署 override 入口
+  setpoint_rate_hz: 30.0              # setpoint 发布频率（Hz，>0）：legacy 30Hz
+  pose_timeout_s: 0.5                 # pose 超时（s，>0）：位姿新鲜度判据
+  state_timeout_s: 1.0                # state 超时（s，>0）：MAVROS state 新鲜度判据
+  position_tolerance_m: 0.2           # 位置容差（m，>0）：到达判据
+  yaw_tolerance_rad: 0.15             # yaw 容差（rad，>0）：偏航对准判据
+  settle_duration_s: 1.0              # 稳定时长（s，>0）：终点稳定确认窗口
+  require_connected: true             # 要求 MAVROS 已连接（bool）：连接前拒绝执行
+  require_armed: false                # 要求已 armed（bool）：实验/实机部署入口
+  require_offboard: false             # 要求已 OFFBOARD（bool）：实验/实机部署入口
+  auto_arm: false                     # 自动 arm（bool）：实验/实机部署入口（本包不主动 arm）
+  auto_offboard: false                # 自动切 OFFBOARD（bool）：实验/实机部署入口
+

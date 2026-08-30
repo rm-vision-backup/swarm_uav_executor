@@ -1,0 +1,11 @@
+<launch>
+  <!-- Deliberately no MAVROS, bridge, peer master, TimeReference, or offset injection. -->
+  <node pkg="swarm_uav_executor" type="gps_bias_node.py"
+        name="gps_bias_node" output="screen">
+    <param name="window_s" value="10.0" />
+    <param name="publish_rate_hz" value="10.0" />
+    <param name="lockout_s" value="3.0" />
+  </node>
+  <test test-name="gps_bias_no_reference" pkg="swarm_uav_executor"
+        type="test_gps_bias_no_reference_ros.py" time-limit="15" />
+</launch>

@@ -4,32 +4,34 @@
 # launch 仅保留 deployment override（neighbor_intents/formation_offsets/
 # uav_task_timeout_s/ego_hold_timeout_s 等）。waypoint_densify_spacing
 # authoritative 3.0（修 executor_defaults.yaml 2.0 漂移）。
-ego_swarm:
-  namespace: ''
-  task_timeout_s: 200.0
-  min_center_distance_m: 1.0
-  position_tolerance_m: 0.2
-  arrival_stable_s: 1.0
-  pose_timeout_s: 1.0
-  mavros_state_topic: ''
-  follower_p_gain: 1.0
-  follower_i_gain: 0.1
-  follower_limit_xy: 2.0
-  follower_limit_z: 1.0
-  layer_move_to: 15.0
-  layer_follow_route: 12.0
-  layer_fault_exit: 8.0
-  layer_tolerance_m: 0.5
-  waypoint_densify_spacing: 3.0
-  follower_setpoint_topic: /setpoint/follower
-  neighbor_intents: ''
-  leader_odom_topic_prefix: ''
-  neighbor_odom_topics: ''
-  formation_offsets: {}
-  arm_service: /mavros/cmd/arming
-  mode_service: /mavros/set_mode
-  origin_confirmed_topic: /gp_origin_confirmed
-  configure_px4_params: false
-  px4_param_set_timeout_s: 5.0
-  com_rcl_except: 4
-  nav_rcl_act: 0
+# 语义（单位见注释）。
+ego_swarm:                              # EGO-Swarm driver 参数段（~ego_swarm/*）：EgoSwarmDriver 读取
+  namespace: ''                       # 本机话题命名空间前缀（str）：'' 表示全局无前缀
+  task_timeout_s: 200.0               # 任务执行超时（s，>0）：DRIVER_TIMEOUT 兜底等待窗口
+  min_center_distance_m: 1.0          # 机间中心距门禁（m，>0）：三维 1m 球形执行门禁
+  position_tolerance_m: 0.2           # 位置容差（m，>0）：终端/推进位置判据
+  arrival_stable_s: 1.0               # 到达稳定时长（s，>0）：终点稳定确认窗口
+  pose_timeout_s: 1.0                 # 本机 pose 超时（s，>0）：local_pose 新鲜度判据
+  mavros_state_topic: ''              # MAVROS state 话题（str）：'' 用默认 /mavros/state
+  follower_p_gain: 1.0                # follower PI 比例增益（无量纲，>0）：编队位置 P
+  follower_i_gain: 0.1                # follower PI 积分增益（无量纲，>0）：编队位置 I
+  follower_limit_xy: 2.0              # follower 水平限幅（m，>0）：编队偏置水平最大偏移
+  follower_limit_z: 1.0               # follower 垂直限幅（m，>0）：编队偏置垂直最大偏移
+  layer_move_to: 15.0                 # MOVE_TO 动作层高度（m，>0）：任务分层
+  layer_follow_route: 12.0            # FOLLOW_ROUTE 动作层高度（m，>0）：任务分层
+  layer_fault_exit: 8.0               # FAULT_EXIT 动作层高度（m，>0）：任务分层
+  layer_tolerance_m: 0.5              # 动作层容差（m，>0）：层间切换判据
+  waypoint_densify_spacing: 3.0       # 航点加密间距（m，>0）：authoritative 3.0（26082916 修 2.0 漂移）
+  follower_setpoint_topic: /setpoint/follower  # follower setpoint 话题（str）：PI 输出发布路径
+  neighbor_intents: ''                # 邻机 intent 话题列表（str，逗号分隔）：deployment override
+  leader_odom_topic_prefix: ''        # leader odom 话题前缀（str）：'' 自动按 /<leader>/mavros/local_position/odom
+  neighbor_odom_topics: ''            # 邻机 odom 话题列表（str，逗号分隔）：deployment override
+  formation_offsets: {}               # 编队槽位（dict uav_id->[x,y,z] ENU，相对 leader）：可空
+  arm_service: /mavros/cmd/arming     # arm 服务名（str）：本机 arm 入口（本包不主动调用）
+  mode_service: /mavros/set_mode      # 模式切换服务名（str）：本包不主动调用
+  origin_confirmed_topic: /gp_origin_confirmed  # 原点确认话题（str）：统一 ENU 原点回读
+  configure_px4_params: false         # 是否设置 PX4 参数（bool）：部署配置（takeoff 脚本负责）
+  px4_param_set_timeout_s: 5.0        # PX4 参数设置超时（s，>0）：部署配置
+  com_rcl_except: 4                   # COM_RCL_EXCEPT（int）：无 RC SITL 必需参数
+  nav_rcl_act: 0                      # NAV_RCL_ACT（int）：无 RC failsafe 行为
+

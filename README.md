@@ -37,8 +37,9 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - HOLD：从 fresh local pose 锁存一次固定 position/yaw；pose stale 时复用上个已验证 HOLD，
   不生成 (0,0,0)。业务字段按 ROS ENU 填写，MAVROS 完成 ENU→NED。
 - **禁止**任何其他节点在 EGO 运行链路上发布 `/mavros/setpoint_raw/local` 或
-  `/mavros/setpoint_position/local`；`safe_valley_exp` 的 `flock_comm.py`/`safe_flock_*` 与
-  `mavros_position` 兼容 driver 属独立 legacy/兼容场景，不得与 EGO launch 同时启动。
+  `/mavros/setpoint_position/local`；已删除的 `safe_valley_exp` flock 链路
+  （implementation_plan_26083018 拆包删除）与 `mavros_position` 兼容 driver 属
+  独立 legacy/兼容场景，不得与 EGO launch 同时启动。
 - 仲裁逻辑为纯类 `swarm_uav_executor.setpoint_relay.SetpointRelay`（无 ROS 依赖，可单测）。
 
 ## 构建与测试
