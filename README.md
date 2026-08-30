@@ -8,7 +8,7 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - 同一时刻最多一个正常任务；同键同内容幂等，同键不同内容拒绝，HOLD 可抢占。
 - `UavTask` 执行 PREPARE，`UavTaskControl START` 才允许动作线程推进；整批未通过时可在 START 前 ABORT。
 - `mavros_position` 只连接配置的本机 MAVROS namespace，持续发布本地位置 setpoint。
-- arm/OFFBOARD 由外部起飞脚本（`offboard_takeoff_15.py`：HOLD → arm → OFFBOARD）先行完成；
+- arm/OFFBOARD 由外部起飞脚本（`offboard_takeoff_15_sitl.py`：HOLD → arm → OFFBOARD）先行完成；
   外部起飞完成后再提交 `UavTask` 执行 PREPARE，整批 PREPARE 成功后才发送 `UavTaskControl START`。
   `ego_swarm` driver 的 `prepare()` 要求本机**已 armed + OFFBOARD**，不再自行按需 arm；
   软起飞由 `ego_planner_driver` 的 `TAKEOFF` 状态自动完成（`takeoff_height_m=5.0`）。

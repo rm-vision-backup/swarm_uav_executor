@@ -7,7 +7,7 @@ the single source of truth for the motion lifecycle:
 
   The driver performs arm/OFFBOARD pre-flight checks only (prepare() requires an
   already-armed, OFFBOARD vehicle). Arm/OFFBOARD itself is done by the external
-  takeoff script (offboard_takeoff_15.py); soft takeoff is handled by the C++ node's
+  takeoff script (offboard_takeoff_15_sitl.py); soft takeoff is handled by the C++ node's
   TAKEOFF state.  The C++ node generates all trajectory setpoints (PX4 OFFBOARD
   compatible), except for the FOLLOW_ROUTE follower's PI position loop.
 
