@@ -42,6 +42,9 @@ _TERMINAL_OK = frozenset((_STATE_COMPLETED,))
 # implementation_plan_26082621：删 POSE_STALE（C++ 不再发布该状态；HOLD 锁存位置）。
 _TERMINAL_BAD = frozenset((_STATE_PLAN_FAILED, _STATE_TIMEOUT, _STATE_BRAKE_HOLD))
 _MONITOR_HZ = 20.0
+# 变更 D/F（26090802）：组级安全广播 reason 约定（不改 msg/srv）。
+GROUP_SAFETY_REASON = "GROUP_SAFETY"
+GROUP_SAFETY_RESET_REASON = "GROUP_SAFETY_RESET"
 
 _SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
@@ -147,6 +150,10 @@ class EgoSwarmDriver(MotionDriver):
         self._hold_pub = ros.Publisher(
             self.namespace + "/hold", Empty, queue_size=1
         )
+        # 变更 D：直接锁存悬停入口（组级安全 / 实时门禁 → C++ /brake_hold）。
+        self._brake_hold_pub = ros.Publisher(
+            self.namespace + "/brake_hold", Empty, queue_size=1
+        )
         # Follower PI candidate topic: PositionTarget (mask 2496). EGO trajectory
         # publishes /setpoint/ego; setpoint_relay arbitrates both sources and is
         # the sole owner of /mavros/setpoint_raw/local.
@@ -197,6 +204,15 @@ class EgoSwarmDriver(MotionDriver):
         self._waypoint_densify_spacing = float(waypoint_densify_spacing)
         self._arm_service = arm_service
         self._mode_service = mode_service
+        # 变更 E（26090802）：单一执行期距离 monitor（EGO 巡航与 PI/follower
+        # 共用一个 monitor 线程与同一阈值 min_center_distance_m）。monitor 每
+        # _MONITOR_HZ 检查 fresh 邻机 odom 3D 中心距；触发即发布直接锁存
+        # (/brake_hold) 并记录 breach，供当前执行 loop 统一收口
+        # MIN_DISTANCE_BREACH（无双处独立判定路径）。
+        self._breach_distance = None
+        self._breach_context = None
+        self._monitor_stop = threading.Event()
+        self._monitor_thread = None
 
     def _on_state(self, msg):
         with self._lock:
@@ -394,6 +410,59 @@ class EgoSwarmDriver(MotionDriver):
             self._last_cmd_reply = None
         self._hold_pub.publish(Empty())
 
+    def _issue_brake_hold(self):
+        """直接锁存悬停（C++ BRAKE_HOLD，变更 D）：executor 实时 3D 门禁/组级
+        安全指令触发；无制动轨迹中间态。"""
+        self._brake_hold_pub.publish(Empty())
+
+    # —— 变更 E：单一执行期距离 monitor ——
+    def _start_breach_monitor(self, context):
+        """EGO 巡航与 PI/follower 共用同一执行期 monitor（同阈值、同频率）。"""
+        with self._lock:
+            self._breach_distance = None
+            self._breach_context = context
+            self._monitor_stop.clear()
+            if self._monitor_thread is None or not self._monitor_thread.is_alive():
+                self._monitor_thread = threading.Thread(
+                    target=self._breach_monitor_loop, daemon=True)
+                self._monitor_thread.start()
+
+    def _breach_monitor_loop(self):
+        while not self._shutdown:
+            if self._monitor_stop.is_set():
+                return
+            with self._lock:
+                own_pose = self._last_pose
+            if own_pose is not None:
+                distance = self._distance_breach(own_pose)
+                if distance is not None:
+                    with self._lock:
+                        self._breach_distance = distance
+                    # 单一锁存入口：实时 3D 门禁触发直接 BRAKE_HOLD。
+                    self._issue_brake_hold()
+                    return
+            time.sleep(1.0 / _MONITOR_HZ)
+
+    def _stop_breach_monitor(self):
+        self._monitor_stop.set()
+        thread = self._monitor_thread
+        if thread is not None:
+            thread.join(timeout=1.0 / _MONITOR_HZ + 0.1)
+        with self._lock:
+            self._breach_distance = None
+            self._breach_context = None
+
+    def _breach_failure(self):
+        """由当前执行 loop 调用的统一收口：返回 MIN_DISTANCE_BREACH MotionResult。"""
+        with self._lock:
+            distance = self._breach_distance
+            context = self._breach_context
+        if distance is None:
+            return None
+        return MotionResult(
+            False, "MIN_DISTANCE_BREACH",
+            self._distance_breach_message(distance, context or "active motion"))
+
     def _emit_completed(self):
         with self._lock:
             self._last_cmd_reply = _STATE_COMPLETED
@@ -406,18 +475,12 @@ class EgoSwarmDriver(MotionDriver):
                 return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
             if base_state is not None and self._monotonic_clock() >= base_state + self.task_timeout_s:
                 return MotionResult(False, "DRIVER_TIMEOUT", "no terminal exec_state within timeout")
-            # 执行层运行时距离门禁：EGO 巡航期间任一 fresh 邻机的三维中心距
-            # < min_center_distance_m -> 本机 HOLD 暂停，任务以
-            # FAILED/MIN_DISTANCE_BREACH 收口（避碰失败兜底，不自动恢复）。
-            with self._lock:
-                own_pose = self._last_pose
-            distance = (self._distance_breach(own_pose)
-                        if own_pose is not None else None)
-            if distance is not None:
-                self._issue_hold()
-                return MotionResult(
-                    False, "MIN_DISTANCE_BREACH",
-                    self._distance_breach_message(distance, "ego cruise"))
+            # 变更 E：执行期距离门禁统一由单 monitor（_breach_monitor_loop）驱动；
+            # 触发即直接锁存 BRAKE_HOLD 并以 MIN_DISTANCE_BREACH 收口（避碰失败
+            # 兜底，不自动恢复）。
+            breach = self._breach_failure()
+            if breach is not None:
+                return breach
             with self._lock:
                 state = self._last_cmd_reply
             if state is None:
@@ -491,11 +554,11 @@ class EgoSwarmDriver(MotionDriver):
                     return MotionResult(False, "LEADER_LOST", "leader odom timed out")
                 if own_pose is None:
                     return MotionResult(False, "POSE_STALE", "no local pose for follower loop")
-                distance = self._distance_breach(own_pose)
-                if distance is not None:
-                    return MotionResult(
-                        False, "MIN_DISTANCE_BREACH",
-                        self._distance_breach_message(distance, "follower PI control"))
+                # 变更 E：执行期距离门禁统一由单 monitor 驱动（直接锁存 BRAKE_HOLD，
+                # MIN_DISTANCE_BREACH 收口），follower 不再自行做第二处判定。
+                breach = self._breach_failure()
+                if breach is not None:
+                    return breach
                 target = (leader_pose.position.x + offset[0],
                           leader_pose.position.y + offset[1],
                           leader_pose.position.z + offset[2])
@@ -552,22 +615,40 @@ class EgoSwarmDriver(MotionDriver):
         return math.hypot(math.hypot(dx, dy), dz) <= self.pos_tolerance_m
 
     def start_move_to(self, goal, cancel_event, deadline):
-        if goal.command == "HOVER":
+        # 变更 E：EGO 巡航（_plan_horizontal → _wait_for_terminal）与 PI/follower
+        # （_follower_loop）共用一个执行期距离 monitor（同阈值 min_center_distance_m、
+        # 同频率 _MONITOR_HZ）。monitor 只在本任务执行期运行，收尾无条件 join。
+        context = ("follower PI control" if (goal.command == "FOLLOW_ROUTE" and goal.formation_follow)
+                   else "ego cruise")
+        self._start_breach_monitor(context)
+        try:
+            if goal.command == "HOVER":
+                return self._plan_horizontal(goal, cancel_event, deadline)
+            if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
+                return self._follower_loop(goal, cancel_event, deadline)
             return self._plan_horizontal(goal, cancel_event, deadline)
-        if goal.command == "FOLLOW_ROUTE" and goal.formation_follow:
-            return self._follower_loop(goal, cancel_event, deadline)
-        return self._plan_horizontal(goal, cancel_event, deadline)
+        finally:
+            self._stop_breach_monitor()
 
     def hold(self, goal: HoldGoal, deadline):
-        # Already holding (HOLD or BRAKE_HOLD after emergency braking): confirm
-        # immediately without clearing _last_cmd_reply or republishing, so a
-        # safety HOLD cannot be blocked by the confirm loop itself.
+        group_safety = (getattr(goal, "reason", "") == GROUP_SAFETY_REASON)
         with self._lock:
             state = self._last_cmd_reply
-        if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
+        if group_safety and state == _STATE_BRAKE_HOLD:
+            return MotionResult(True, "", "egoswarm brake-hold already latched")
+        if not group_safety and state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
+            # Already holding: confirm immediately without clearing _last_cmd_reply
+            # or republishing, so a safety HOLD cannot be blocked by the loop.
             return MotionResult(True, "", "egoswarm already holding")
         if deadline is None:
             return MotionResult(False, "HOLD_TIMEOUT", "egoswarm hold requires a deadline")
+        if group_safety:
+            # 变更 D/F：组级安全广播 → 直接锁存悬停（C++ BRAKE_HOLD）。先停 PI
+            # 候选（direct_control=false），relay 切换到 planner HOLD/锁存目标。
+            self._direct_control_pub.publish(Bool(False))
+            self._issue_brake_hold()
+        else:
+            self._issue_hold()
         # State-transition confirm bound comes ONLY from the caller deadline
         # (executor passes clock() + state_transition_timeout_s, default 2s).
         # This is intentionally independent from task_timeout_s (200s), which

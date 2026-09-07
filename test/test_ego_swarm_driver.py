@@ -407,8 +407,8 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertEqual(result.error_code, "MIN_DISTANCE_BREACH")
         self.assertIn("0.990 m", result.message)
         self.assertIn("1.000 m", result.message)
-        # 本机 HOLD 已发出（_issue_hold -> /hold），暂停不自动恢复。
-        self.assertGreaterEqual(len(driver._hold_pub.msgs), 1)
+        # 变更 E：执行期单 monitor 触发直接锁存（/brake_hold），暂停不自动恢复。
+        self.assertGreaterEqual(len(driver._brake_hold_pub.msgs), 1)
 
     def test_3d_distance_gate_accepts_1_01m(self):
         driver, _ = self._driver()
@@ -463,6 +463,45 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result.success)
         self.assertEqual(len(driver._hold_pub.msgs), 0)
+
+    def test_single_monitor_covers_follower_loop(self):
+        # 变更 E：PI/follower 与 EGO 巡航共用同一执行期 monitor（同阈值同频率）。
+        driver, _ = self._driver()
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        self._emit_leader_odom(driver, 0.0, 0.0, 12.0)
+        goal = MotionGoal(0, 0, 12, 0, command="FOLLOW_ROUTE",
+                          formation_follow=True, leader_id="UAV1",
+                          formation_offset=(1.0, 0.0, 0.0), layer_z=12.0)
+        result_holder = {}
+        def runner():
+            result_holder["result"] = driver.start_move_to(
+                goal, threading.Event(), time.monotonic() + 2.0)
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        time.sleep(0.15)
+        self._emit_neighbor_odom(driver, 0.99, 0.0, 12.0)
+        thread.join(1.5)
+        result = result_holder.get("result")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "MIN_DISTANCE_BREACH")
+        self.assertGreaterEqual(len(driver._brake_hold_pub.msgs), 1)
+
+    def test_group_safety_hold_publishes_brake_hold(self):
+        # 变更 D/F：UavHold(reason=GROUP_SAFETY) → driver 发直接锁存 /brake_hold
+        # （BRAKE_HOLD 语义），而非普通 /hold。
+        driver, _ = self._driver()
+        self._emit_pose(driver, 1.0, 2.0, 5.0)
+        push_later(driver, "BRAKE_HOLD", 0.05)
+        result = driver.hold(HoldGoal("GROUP_SAFETY"), time.monotonic() + 1.0)
+        self.assertTrue(result.success)
+        self.assertGreaterEqual(len(driver._brake_hold_pub.msgs), 1)
+        self.assertEqual(len(driver._hold_pub.msgs), 0)
+        # 再次 group hold（已锁存 BRAKE_HOLD → 幂等确认，不再重复发 brake）。
+        count = len(driver._brake_hold_pub.msgs)
+        result = driver.hold(HoldGoal("GROUP_SAFETY"), time.monotonic() + 1.0)
+        self.assertTrue(result.success)
+        self.assertEqual(len(driver._brake_hold_pub.msgs), count)
 
     def test_brake_hold_is_terminal_failure_after_braking_state(self):
         driver, _ = self._driver()
