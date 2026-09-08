@@ -14,19 +14,13 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
   软起飞由 `ego_planner_driver` 的 `TAKEOFF` 状态自动完成（`takeoff_height_m=5.0`）。
   `mavros_position` 兼容 driver 仍不自动 arm。
 - `MOVE_TO`、`FOLLOW_ROUTE`、`FAULT_EXIT` 分别使用 15/12/8 m 动作层；严格垂直段冻结 x/y/yaw，其他非 follower 航段使用 EGO，followers 使用 PI+编队偏置。
-- EGO launch 的 `safety_supervisor_mode` 默认 `active`（变更 D/E 26090802：SafetyPredictor
-  EMERGENCY 只置 `emergency_pending_` + `planning_requested_` 作 replan/预警与完成让位，不再直接
-  驱动制动锁存；`BRAKE_HOLD` 直接锁存仅由实时 3D 门禁 / 组级安全指令触发）。预测诊断写入工作区
+- EGO launch 的 `safety_supervisor_mode` 默认 `active`（方案 Y：EMERGENCY 只置位，
+  制动由 replan 线程提交）；预测诊断写入工作区
   `runtime_logs/ego_planner/UAVn-ego-planner.log`。监督层细节见
   `ego_planner_driver/README.md`。
-- EGO 巡航、垂直段与 follower PI 共用一个执行期距离 monitor（同阈值 `min_center_distance_m=1.0`、
-  同频率 20Hz，`EgoSwarmDriver` 单线程）；三维 Euclidean 中心距小于 1.0 m 时直接发布
-  `/brake_hold`（C++ `BRAKE_HOLD` 直接锁存悬停）并以 `MIN_DISTANCE_BREACH` 收口，无双处独立判定
-  （恰好 1.0 m 安全）。
-- 组级安全联动（变更 F 26090802）：backend 识别安全类终态 error_code（`BRAKE_HOLD` /
-  `MIN_DISTANCE_BREACH` / `EMERGENCY_BRAKE`）后向目标集合广播 `UavHold(reason="GROUP_SAFETY")`
-  （默认 all_enabled 含 reserve）。executor 精确按该 reason 进入安全锁存：置位后拒绝后续普通任务/
-  START，仅人工复位（节点重启或 `UavHold(reason="GROUP_SAFETY_RESET")`）。普通收口 HOLD 不受影响。
+- EGO 巡航、垂直段与 follower PI 对邻机实施半径 1.0 m 的三维球形中心距运行时门禁；
+  三维 Euclidean 中心距小于 1.0 m 时返回失败并触发整批 HOLD（恰好 1.0 m 安全，
+  EGO 巡航与 follower 共用门禁）。
 - 坐标系、yaw 约定、阈值、A01-A15 映射及 MAVROS namespace 未经现场冻结前，只允许 mock、SITL 或不上桨验证。
 
 ## setpoint_relay（MAVROS setpoint 唯一出口）

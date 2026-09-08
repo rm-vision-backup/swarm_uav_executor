@@ -3,9 +3,7 @@ import time, unittest
 from swarm_uav_interfaces.msg import TaskAssignment
 from swarm_uav_interfaces.srv import UavTaskControlRequest, UavTaskRequest, UavHoldRequest
 from swarm_uav_executor.drivers.mock import MockMotionDriver
-from swarm_uav_executor.executor import (GROUP_SAFETY_REASON,
-                                         GROUP_SAFETY_RESET_REASON,
-                                         UavTaskExecutor)
+from swarm_uav_executor.executor import UavTaskExecutor
 from swarm_uav_executor.models import ExecutorConfig, ExecutorIdentity
 from swarm_uav_executor.state_reporter import StateReporter
 from swarm_uav_executor.task_store import TaskStore
@@ -70,27 +68,4 @@ class ExecutorTest(unittest.TestCase):
         executor.handle_task(request()); time.sleep(.08); record=next(iter(store._records.values()))
         self.assertEqual(record.error_code,"HOLD_FAILED")
         self.assertIn("TEST_FAILED",record.message); self.assertEqual(driver.hold_count,1)
-    def test_group_safety_lock_rejects_task_and_start_until_reset(self):
-        executor,store,_,driver=make(.02)
-        executor.config = ExecutorConfig("/task", "/hold", "/state", "/control", True,
-                                         terminal_republish_count=0)
-        self.assertTrue(executor.handle_task(request()).accepted)  # c1 prepared
-        hold=UavHoldRequest(protocol_version="1.0",mission_id="m",command_id="c1",uav_id="A01",exec_target="UAV1",reason=GROUP_SAFETY_REASON)
-        self.assertTrue(executor.handle_hold(hold).accepted)
-        time.sleep(.06)
-        # 锁存置位后拒绝新任务与 START。
-        self.assertEqual(executor.handle_task(request("c2")).error_code, "SAFETY_LATCHED")
-        control=UavTaskControlRequest(protocol_version="1.0", operation="START",
-            mission_id="m", command_id="c1", uav_id="A01", exec_target="UAV1")
-        self.assertEqual(executor.handle_task_control(control).error_code, "SAFETY_LATCHED")
-        # 最小人工复位入口（GROUP_SAFETY_RESET）清除锁存，此后新任务可接收。
-        reset=UavHoldRequest(protocol_version="1.0",mission_id="m",command_id="c1",uav_id="A01",exec_target="UAV1",reason=GROUP_SAFETY_RESET_REASON)
-        self.assertTrue(executor.handle_hold(reset).accepted)
-        time.sleep(.02)
-        self.assertTrue(executor.handle_task(request("c2")).accepted)
-    def test_ordinary_hold_does_not_set_safety_latch(self):
-        executor,store,_,driver=make(.02)
-        hold=UavHoldRequest(protocol_version="1.0",mission_id="m",command_id="c1",uav_id="A01",exec_target="UAV1",reason="stop")
-        self.assertTrue(executor.handle_hold(hold).accepted); time.sleep(.05)
-        self.assertTrue(executor.handle_task(request("c1")).accepted)  # 普通 HOLD 不锁存
 if __name__ == "__main__": unittest.main()

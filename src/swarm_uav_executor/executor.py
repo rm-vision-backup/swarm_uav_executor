@@ -8,31 +8,18 @@ from .models import (CONFLICT, DUPLICATE, HoldGoal, STATE_ACCEPTED,
 from .validation import (RequestValidationError, build_goal, request_fingerprint, task_key_from_request,
                          validate_hold_request, validate_task_request)
 
-# 变更 F（26090802）：组级安全 reason 约定（不改 msg/srv）。reason=GROUP_SAFETY
-# 触发安全锁存（BRAKE_HOLD 语义 + 拒绝新任务/START）；GROUP_SAFETY_RESET 为最小
-# 人工复位入口（节点重启亦复位）。只精确匹配字符串，不误伤普通收口 HOLD。
-GROUP_SAFETY_REASON = "GROUP_SAFETY"
-GROUP_SAFETY_RESET_REASON = "GROUP_SAFETY_RESET"
-
 
 class UavTaskExecutor:
     def __init__(self, identity, config, store, reporter, driver, clock=time.time):
         self.identity = identity; self.config = config; self.store = store; self.reporter = reporter
         self.driver = driver; self.clock = clock; self._lock = threading.RLock(); self._cancel = None
         self._hold_in_progress = False; self._shutdown = False; self._threads = []
-        # 变更 F：组级安全锁存位。置位后拒绝后续普通任务/START，仅人工复位
-        # （节点重启或 UavHold reason=GROUP_SAFETY_RESET）。
-        self._safety_latch = False
 
     def handle_task(self, request):
         try:
             validate_task_request(request, self.identity, self.config.supported_commands)
         except RequestValidationError as error:
             return UavTaskResponse(False, STATE_FAILED, error.error_code, error.message)
-        with self._lock:
-            if self._safety_latch:
-                return UavTaskResponse(False, STATE_FAILED, "SAFETY_LATCHED",
-                                       "group safety hold latched; manual reset required")
         key = task_key_from_request(request); fingerprint = request_fingerprint(request)
         with self._lock:
             current = self.store.get(key)
@@ -94,9 +81,6 @@ class UavTaskExecutor:
                 return UavTaskControlResponse(True, STATE_FAILED, "TASK_ABORTED", "task aborted")
             if operation != "START":
                 return UavTaskControlResponse(False, record.status, "BAD_OPERATION", "operation must be START or ABORT")
-            if self._safety_latch:
-                return UavTaskControlResponse(False, record.status, "SAFETY_LATCHED",
-                                              "group safety hold latched; manual reset required")
             if record.started:
                 return UavTaskControlResponse(True, record.status, record.error_code,
                                               "task already started")
@@ -114,13 +98,6 @@ class UavTaskExecutor:
         try: validate_hold_request(request, self.identity)
         except RequestValidationError as error: return UavHoldResponse(False, error.error_code, error.message)
         with self._lock:
-            if str(request.reason or "") == GROUP_SAFETY_RESET_REASON:
-                # 最小人工复位入口：清除安全锁存位后仍执行一次 HOLD 确认（保持当前悬停），
-                # 复位后新任务/START 可恢复接收。
-                self._safety_latch = False
-            elif str(request.reason or "") == GROUP_SAFETY_REASON:
-                # 组级安全广播：置位本机安全锁存，进入 BRAKE_HOLD 锁存语义。
-                self._safety_latch = True
             if self._hold_in_progress: return UavHoldResponse(True, "", "HOLD already active")
             interrupted = self.store.active(); self._hold_in_progress = True
             if self._cancel is not None: self._cancel.set()
