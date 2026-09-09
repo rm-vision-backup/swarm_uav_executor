@@ -180,11 +180,44 @@ class EgoSwarmDriverTest(unittest.TestCase):
 
     def test_hold_confirms_brake_hold(self):
         driver, _ = self._driver()
-        # BRAKE_HOLD (emergency braking endpoint latched) also means the
-        # aircraft is stopped, so hold() must confirm it instead of timing out.
+        # BRAKE_HOLD (direct safety lock endpoint) also means the aircraft is
+        # stopped, so an ordinary hold() must confirm it instead of timing out.
         push_later(driver, "BRAKE_HOLD", 0.05)
         result = driver.hold(HoldGoal("stop"), time.monotonic() + 1.0)
         self.assertTrue(result.success)
+
+    def test_safety_hold_publishes_brake_hold_and_confirms(self):
+        # implementation_plan_26090900 §4.4：safety reason（RUNTIME_BRAKE_HOLD /
+        # GROUP_BRAKE_HOLD:...）→ driver 发布 /brake_hold 直接锁存，等待 C++
+        # BRAKE_HOLD 确认；普通 reason 不发布 /brake_hold。
+        driver, _ = self._driver()
+        result_holder = {}
+        def call():
+            result_holder["r"] = driver.hold(
+                HoldGoal("RUNTIME_BRAKE_HOLD"), time.monotonic() + 1.0)
+        thread = threading.Thread(target=call, daemon=True)
+        thread.start()
+        time.sleep(0.02)
+        # driver.hold 已发布 /brake_hold（在等待前同步执行），未发普通 /hold。
+        self.assertEqual(len(driver._brake_hold_pub.msgs), 1)
+        self.assertEqual(len(driver._hold_pub.msgs), 0)
+        push_later(driver, "BRAKE_HOLD", 0.05)
+        thread.join(1.0)
+        self.assertTrue(result_holder["r"].success)
+
+    def test_group_safety_hold_reason_routes_brake(self):
+        driver, _ = self._driver()
+        result_holder = {}
+        def call():
+            result_holder["r"] = driver.hold(
+                HoldGoal("GROUP_BRAKE_HOLD:BRAKE_HOLD:A08"), time.monotonic() + 1.0)
+        thread = threading.Thread(target=call, daemon=True)
+        thread.start()
+        time.sleep(0.02)
+        self.assertEqual(len(driver._brake_hold_pub.msgs), 1)
+        push_later(driver, "BRAKE_HOLD", 0.05)
+        thread.join(1.0)
+        self.assertTrue(result_holder["r"].success)
 
     def test_hold_respects_caller_deadline(self):
         driver, _ = self._driver()
@@ -464,7 +497,9 @@ class EgoSwarmDriverTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(len(driver._hold_pub.msgs), 0)
 
-    def test_brake_hold_is_terminal_failure_after_braking_state(self):
+    def test_brake_hold_is_terminal_failure(self):
+        # implementation_plan_26090900：C++ 直接锁存 BRAKE_HOLD（无 EMERGENCY_BRAKE
+        # 中间态）→ exec_state=BRAKE_HOLD 即 terminal-bad，任务以 BRAKE_HOLD 收口。
         driver, _ = self._driver()
         self._emit_pose(driver, 0.0, 0.0, 12.0)
         result_holder = {}
@@ -473,8 +508,7 @@ class EgoSwarmDriverTest(unittest.TestCase):
                 MotionGoal(10, 0, 12, 0), threading.Event(), time.monotonic() + 2.0)
         thread = threading.Thread(target=runner, daemon=True)
         thread.start()
-        push_later(driver, "EMERGENCY_BRAKE", 0.05)
-        push_later(driver, "BRAKE_HOLD", 0.10)
+        push_later(driver, "BRAKE_HOLD", 0.05)
         thread.join(1.5)
         result = result_holder.get("result")
         self.assertIsNotNone(result)

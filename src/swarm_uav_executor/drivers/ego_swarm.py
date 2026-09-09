@@ -3,7 +3,13 @@
 The C++ node publishes a latched exec_state topic that this driver uses as
 the single source of truth for the motion lifecycle:
   HOLD -> TAKEOFF -> EXECUTING -> COMPLETED / EGO_PLAN_FAILED / EGO_EXEC_TIMEOUT /
-  EMERGENCY_BRAKE -> BRAKE_HOLD
+  BRAKE_HOLD
+
+The C++ node directly latches BRAKE_HOLD (capturing its own current position)
+for every safety exit -- planner prediction EMERGENCY after failed replan/yield,
+executor real-time MIN_DISTANCE_BREACH, runtime-specified HOLD, and group
+safety HOLD (implementation_plan_26090900).  There is no EMERGENCY_BRAKE
+trajectory state anymore.
 
   The driver performs arm/OFFBOARD pre-flight checks only (prepare() requires an
   already-armed, OFFBOARD vehicle). Arm/OFFBOARD itself is done by the external
@@ -36,12 +42,24 @@ _STATE_COMPLETED = "COMPLETED"
 _STATE_HOLD = "HOLD"
 _STATE_PLAN_FAILED = "EGO_PLAN_FAILED"
 _STATE_TIMEOUT = "EGO_EXEC_TIMEOUT"
-_STATE_EMERGENCY_BRAKE = "EMERGENCY_BRAKE"
 _STATE_BRAKE_HOLD = "BRAKE_HOLD"
 _TERMINAL_OK = frozenset((_STATE_COMPLETED,))
 # implementation_plan_26082621：删 POSE_STALE（C++ 不再发布该状态；HOLD 锁存位置）。
 _TERMINAL_BAD = frozenset((_STATE_PLAN_FAILED, _STATE_TIMEOUT, _STATE_BRAKE_HOLD))
 _MONITOR_HZ = 20.0
+
+# 安全 HOLD reason（backend 构造，implementation_plan_26090900 §4.1/§4.3）：
+# runtime 指定 HOLD → "RUNTIME_BRAKE_HOLD"；组级安全收口 →
+# "GROUP_BRAKE_HOLD:<error_code>:<trigger_uav>"。driver.hold() 据此选择直接
+# BRAKE_HOLD 路由（发布 /brake_hold，等 C++ 锁存），普通 reason 沿用现有语义。
+_HOLD_REASON_RUNTIME_BRAKE = "RUNTIME_BRAKE_HOLD"
+_HOLD_REASON_GROUP_BRAKE = "GROUP_BRAKE_HOLD"
+
+
+def _is_safety_hold_reason(reason: str) -> bool:
+    return (reason == _HOLD_REASON_RUNTIME_BRAKE
+            or reason == _HOLD_REASON_GROUP_BRAKE
+            or reason.startswith(_HOLD_REASON_GROUP_BRAKE + ":"))
 
 _SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
@@ -146,6 +164,12 @@ class EgoSwarmDriver(MotionDriver):
         )
         self._hold_pub = ros.Publisher(
             self.namespace + "/hold", Empty, queue_size=1
+        )
+        # 直接 BRAKE_HOLD 锁存入口（implementation_plan_26090900 §4.4）：safety
+        # HOLD（runtime 指定 / 组级安全）由本 driver 发布 /brake_hold，C++ 捕获
+        # 本机当前位置直接进入 BRAKE_HOLD（无 EMERGENCY_BRAKE 中间态）。
+        self._brake_hold_pub = ros.Publisher(
+            self.namespace + "/brake_hold", Empty, queue_size=1
         )
         # Follower PI candidate topic: PositionTarget (mask 2496). EGO trajectory
         # publishes /setpoint/ego; setpoint_relay arbitrates both sources and is
@@ -394,6 +418,11 @@ class EgoSwarmDriver(MotionDriver):
             self._last_cmd_reply = None
         self._hold_pub.publish(Empty())
 
+    def _issue_brake_hold(self):
+        with self._lock:
+            self._last_cmd_reply = None
+        self._brake_hold_pub.publish(Empty())
+
     def _emit_completed(self):
         with self._lock:
             self._last_cmd_reply = _STATE_COMPLETED
@@ -559,15 +588,22 @@ class EgoSwarmDriver(MotionDriver):
         return self._plan_horizontal(goal, cancel_event, deadline)
 
     def hold(self, goal: HoldGoal, deadline):
-        # Already holding (HOLD or BRAKE_HOLD after emergency braking): confirm
-        # immediately without clearing _last_cmd_reply or republishing, so a
-        # safety HOLD cannot be blocked by the confirm loop itself.
+        # Already holding (HOLD or BRAKE_HOLD): confirm immediately without
+        # clearing _last_cmd_reply or republishing, so a safety HOLD cannot be
+        # blocked by the confirm loop itself.
         with self._lock:
             state = self._last_cmd_reply
         if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
             return MotionResult(True, "", "egoswarm already holding")
         if deadline is None:
             return MotionResult(False, "HOLD_TIMEOUT", "egoswarm hold requires a deadline")
+        # implementation_plan_26090900 §4.4：safety reason（RUNTIME_BRAKE_HOLD /
+        # GROUP_BRAKE_HOLD:...）走直接 BRAKE_HOLD 入口——发布 /brake_hold，等 C++
+        # 锁存 BRAKE_HOLD；普通 reason 沿用现有 /hold 语义（确认 HOLD/BRAKE_HOLD）。
+        reason = str(getattr(goal, "reason", "") or "")
+        brake_hold = _is_safety_hold_reason(reason)
+        if brake_hold:
+            self._issue_brake_hold()
         # State-transition confirm bound comes ONLY from the caller deadline
         # (executor passes clock() + state_transition_timeout_s, default 2s).
         # This is intentionally independent from task_timeout_s (200s), which
@@ -577,7 +613,10 @@ class EgoSwarmDriver(MotionDriver):
         while self._monotonic_clock() < end and not self._shutdown:
             with self._lock:
                 state = self._last_cmd_reply
-            if state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
+            if brake_hold:
+                if state == _STATE_BRAKE_HOLD:
+                    return MotionResult(True, "", "egoswarm BRAKE_HOLD confirmed")
+            elif state in (_STATE_HOLD, _STATE_BRAKE_HOLD):
                 return MotionResult(True, "", "egoswarm HOLD confirmed")
             time.sleep(1.0 / _MONITOR_HZ)
         return MotionResult(False, "HOLD_TIMEOUT", "egoswarm did not confirm HOLD")
