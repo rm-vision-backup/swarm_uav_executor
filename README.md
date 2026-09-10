@@ -42,6 +42,22 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
   独立 legacy/兼容场景，不得与 EGO launch 同时启动。
 - 仲裁逻辑为纯类 `swarm_uav_executor.setpoint_relay.SetpointRelay`（无 ROS 依赖，可单测）。
 
+## 实机部署（implementation_plan_26091101）
+
+机载实机入口与仿真入口分离：
+
+| 入口 | 用途 |
+|---|---|
+| `launch/uav_offboard_ego.launch` | **仿真**单机机载层（每机独立 ROS Master 11311–11325、SITL UDP FCU、仿真 topology） |
+| `launch/uav_offboard_ego_real.launch` | **实机**单机机载层：身份取本机 hostname（机载电脑 hostname 固定为 `UAVn`），桥接加载 `swarm_topology_bridge/config/topology.yaml`（port_offset=0），FCU 连接由 `fcu_url` 显式给出（不沿用 SITL localhost/仿真 UDP） |
+
+- 开机自启：`services/swarm-uav-onboard.service`（安装/启停见 `services/README.md`）。service
+  只启动本机程序，不循环启动其他 UAV；**不自动 arm / OFFBOARD / 起飞 / 任务 START**，实机由现场
+  遥控器完成 arm/OFFBOARD。
+- 身份边界：机载 ROS 运行时统一使用执行层 `UAVn`（`uav_id`、`exec_target`、hostname、
+  topic/service 路径）；任务层 `Axx` 仅由 `tcp_to_ros` 处理，机载不做 Axx 反向映射。
+- 诊断日志：`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/runtime_logs/ego_planner`，不硬编码固定 home。
+
 ## 构建与测试
 
 ```bash

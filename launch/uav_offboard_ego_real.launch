@@ -1,0 +1,70 @@
+<launch>
+  <!-- 实机单机机载入口（implementation_plan_26091101 §5.2）：与仿真
+       `uav_offboard_ego.launch` 分离；身份取本机 hostname（机载电脑 hostname
+       固定为 UAVn），桥接加载实机生产 `topology.yaml`（port_offset=0）。 
+       不开机自启 arm/OFFBOARD：实机 arm/OFFBOARD 由现场遥控器完成。 -->
+  <arg name="uav_name" default="$(env HOSTNAME)" />
+  <arg name="uav_id" default="$(arg uav_name)" />
+  <arg name="tgt_system" default="1" />
+  <!-- 实机 FCU 连接必须显式给出，禁止沿用 SITL 的 localhost/仿真 UDP：
+       如 serial:///dev/ttyACM0:921600 或 udp://:14540@<fcu-ip>:14557 -->
+  <arg name="fcu_url" />
+  <arg name="topology_config"
+       default="$(find swarm_topology_bridge)/config/topology.yaml" />
+  <arg name="diagnostic_log_dir"
+       default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
+  <arg name="neighbor_intents" default="" />
+  <!-- enable_rebound/uav_task_timeout_s/ego_hold_timeout_s/safety_supervisor_mode
+       业务默认来自 planner/executor/safety canonical YAML；此处 arg 默认空。 -->
+  <arg name="enable_rebound" default="" />
+  <arg name="interfaces_version" default="deployment-unset" />
+  <arg name="formation_offsets" default="{}" />
+  <arg name="leader_odom_topic_prefix" default="" />
+  <arg name="neighbor_odom_topics" default="" />
+  <arg name="uav_task_timeout_s" default="" />
+  <arg name="ego_hold_timeout_s" default="" />
+  <arg name="safety_supervisor_mode" default="" />
+
+  <!-- 1. MAVROS 对接本机 FCU（实机链路；gcs_url 空，不启用 GCS 转发） -->
+  <include file="$(find mavros)/launch/px4.launch">
+    <arg name="gcs_url" value="" />
+    <arg name="fcu_url" value="$(arg fcu_url)" />
+    <arg name="tgt_system" value="$(arg tgt_system)" />
+    <arg name="tgt_component" value="1" />
+  </include>
+
+  <!-- 2. EGO-Swarm executor（ego driver 集成；arm/OFFBOARD 由现场遥控器完成） -->
+  <include file="$(find swarm_uav_executor)/launch/uav_executor_ego.launch">
+    <arg name="uav_id" value="$(arg uav_id)" />
+    <arg name="exec_target" value="$(arg uav_name)" />
+    <arg name="service_namespace" value="$(arg uav_name)" />
+    <arg name="neighbor_intents" value="$(arg neighbor_intents)" />
+    <arg name="enable_rebound" value="$(arg enable_rebound)" />
+    <arg name="interfaces_version" value="$(arg interfaces_version)" />
+    <arg name="formation_offsets" value="$(arg formation_offsets)" />
+    <arg name="leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
+    <arg name="neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
+    <arg name="uav_task_timeout_s" value="$(arg uav_task_timeout_s)" />
+    <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
+    <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
+    <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
+    <arg name="configure_px4_params" value="false" />
+    <arg name="state_topic" value="/uav_task_state" />
+  </include>
+
+  <!-- 3. 拓扑桥接：实机生产 topology（本机身份由 hostname 判定） -->
+  <include file="$(find swarm_topology_bridge)/launch/bridge_group_a_real.launch">
+    <arg name="config" value="$(arg topology_config)" />
+    <arg name="uav_name" value="$(arg uav_name)" />
+  </include>
+
+  <!-- 4. 一次性全局原点设置和 MAVROS 回读确认。 -->
+  <node pkg="swarm_uav_executor" type="gp_origin_receiver.py"
+        name="gp_origin_receiver" output="screen"/>
+
+  <!-- 5. GPS 时钟偏置：订阅 /mavros/time_reference，1Hz 发布 gps_bias。 -->
+  <node pkg="swarm_uav_executor" type="gps_bias_node.py"
+        name="gps_bias_node" output="screen">
+    <rosparam command="load" file="$(find swarm_uav_executor)/config/gps_bias_defaults.yaml" />
+  </node>
+</launch>

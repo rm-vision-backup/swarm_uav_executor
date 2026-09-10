@@ -1,0 +1,26 @@
+[Unit]
+Description=Swarm UAV onboard stack (MAVROS + EGO planner + executor + topology bridge)
+Documentation=file:///home/ub20tg/catkin_swarm6-2/src/swarm_uav_executor/services/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 实机以普通用户运行；%h = 该用户 home。若需要指定用户，用 drop-in 覆盖 User=
+# 或把下方 SWARM_WS 改成实际工作空间绝对路径。
+Environment=SWARM_WS=%h/catkin_swarm6-2
+Environment=ROS_HOME=%h/catkin_swarm6-2/.ros_home
+Environment=ROS_LOG_DIR=%h/catkin_swarm6-2/.ros_home/log
+# 本机身份 = hostname（机载电脑 hostname 固定为 UAVn）；%H = hostname。
+Environment=SWARM_UAV_NAME=%H
+# 实机 FCU 连接：现场按实际链路覆盖（serial:///dev/ttyACM0:921600 或 udp://:14540@<fcu-ip>:14557）。
+# 不沿用 SITL 的 localhost/仿真 UDP 假设。
+Environment=SWARM_FCU_URL=serial:///dev/ttyACM0:921600
+# 只启动本机机载程序（单机 MAVROS + planner + relay + executor + bridge）；
+# 不 arm、不 OFFBOARD、不起飞、不发送任务 START（实机由遥控器完成 arm/OFFBOARD）。
+ExecStart=/bin/bash -lc 'mkdir -p "$ROS_LOG_DIR"; source /opt/ros/noetic/setup.bash; source "$SWARM_WS/devel/setup.bash"; exec roslaunch swarm_uav_executor uav_offboard_ego_real.launch uav_name:="$SWARM_UAV_NAME" fcu_url:="$SWARM_FCU_URL"'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

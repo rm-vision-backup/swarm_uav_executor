@@ -24,7 +24,7 @@
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
-       default="/home/ub20tg/catkin_swarm6-2/runtime_logs/ego_planner" />
+       default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
 
   <!-- 1. MAVROS 对接本机 PX4 SITL 实例 -->
   <include file="$(find mavros)/launch/px4.launch">
