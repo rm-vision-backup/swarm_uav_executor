@@ -5,10 +5,10 @@
        不开机自启 arm/OFFBOARD：实机 arm/OFFBOARD 由现场遥控器完成。 -->
   <arg name="uav_name" default="$(env HOSTNAME)" />
   <arg name="uav_id" default="$(arg uav_name)" />
-  <arg name="tgt_system" default="1" />
-  <!-- 实机 FCU 连接必须显式给出，禁止沿用 SITL 的 localhost/仿真 UDP：
-       如 serial:///dev/ttyACM0:921600 或 udp://:14540@<fcu-ip>:14557 -->
-  <arg name="fcu_url" />
+  <!-- 实机 FCU 连接（fcu_url / tgt_system）不在本入口传入：机载机的 MAVROS launch
+       （$(find mavros)/launch/px4.launch，现场为 px4_multi.launch）已按本机链路配置
+       实际值（现场实测 UAV6：fcu_url=udp://:15500@、tgt_system=6）；本入口覆盖会顶掉
+       现场配置，故一律沿用 MAVROS launch 的默认值。 -->
   <arg name="topology_config"
        default="$(find swarm_topology_bridge)/config/topology.yaml" />
   <arg name="diagnostic_log_dir"
@@ -25,11 +25,10 @@
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
 
-  <!-- 1. MAVROS 对接本机 FCU（实机链路；gcs_url 空，不启用 GCS 转发） -->
+  <!-- 1. MAVROS 对接本机 FCU（实机链路；gcs_url 空，不启用 GCS 转发）。
+       fcu_url / tgt_system 沿用 MAVROS launch 的现场配置，本入口不传。 -->
   <include file="$(find mavros)/launch/px4.launch">
     <arg name="gcs_url" value="" />
-    <arg name="fcu_url" value="$(arg fcu_url)" />
-    <arg name="tgt_system" value="$(arg tgt_system)" />
     <arg name="tgt_component" value="1" />
   </include>
 

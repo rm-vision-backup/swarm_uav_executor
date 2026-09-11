@@ -17,7 +17,8 @@
    `swarm_uav_interfaces` / `swarm_topology_bridge` / `swarm_uav_executor` / `ego_planner_driver` / `tcp_to_ros`）。
 2. 机载电脑 **hostname 固定为 `UAVn`**（如 `UAV3`），与 `swarm_topology_bridge/config/topology.yaml`
    及 `tcp_to_ros/config/uav_identity_map.yaml` 一致（部署环境条件，已实机验证）。
-3. 现场确认 `SWARM_FCU_URL` 与实际 FCU 链路一致（默认 `serial:///dev/ttyACM0:921600`）。
+3. 现场确认机载 MAVROS launch（`px4.launch` / 现场 `px4_multi.launch`）内 `fcu_url`、`tgt_system`
+   与实际链路一致；本 unit **不传**这两个参数（覆盖会顶掉现场配置）。
 4. 若无 `%h/catkin_swarm6-2` 布局，用 drop-in 覆盖 `SWARM_WS`：
 
    ```bash
