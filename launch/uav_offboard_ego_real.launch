@@ -3,7 +3,13 @@
        `uav_offboard_ego.launch` 分离；身份取本机 hostname（机载电脑 hostname
        固定为 UAVn），桥接加载实机生产 `topology.yaml`（port_offset=0）。 
        不开机自启 arm/OFFBOARD：实机 arm/OFFBOARD 由现场遥控器完成。 -->
-  <arg name="uav_name" default="$(env HOSTNAME)" />
+  <!-- 身份取本机 hostname（机载电脑 hostname 固定为 UAVn）：环境变量 HOSTNAME 优先，
+       缺失时读 /etc/hostname 兜底。不能用 $(env HOSTNAME)——该变量在非交互 shell /
+       systemd 下常常未导出，roslaunch 会直接 RLException（environment variable
+       'HOSTNAME' is not set）；$(eval ...) 禁止 __ 表达式，故读 /etc/hostname。
+       仍可用 uav_name:=UAVn 显式覆盖。 -->
+  <arg name="uav_name"
+       default="$(eval (optenv('HOSTNAME') or open('/etc/hostname').read().strip()))" />
   <arg name="uav_id" default="$(arg uav_name)" />
   <!-- 实机 FCU 连接（fcu_url / tgt_system）不在本入口传入：机载机的 MAVROS launch
        （$(find mavros)/launch/px4.launch，现场为 px4_multi.launch）已按本机链路配置
