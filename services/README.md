@@ -46,3 +46,5 @@ sudo systemctl disable swarm-uav-onboard.service   # 取消开机自启
   不使用 `/tmp`）；planner 诊断日志写入 `runtime_logs/ego_planner/`。
 - 停止/重跑：先 `stop`（或现场 `cleanup`），确认进程与端口 clean 后再 `start`；不要就地
   重启单机子集。
+- 现场/远程**手动**启动（不装 unit 时）：`../bashs/start_onboard.sh`（含环境准备 + 终端转录），
+  停止 `../bashs/stop_onboard.sh`。
