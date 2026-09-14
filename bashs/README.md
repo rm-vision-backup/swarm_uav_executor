@@ -2,8 +2,8 @@
 
 机载电脑上手动启动/停止**本机**机载栈。等价于 `../../swarm_uav_interfaces/real_setup.md`
 §5.1.1 + §5.1.2 方式 B 的几条命令，只是不用每次手打、也不会漏设 `UAV`。
-**只做这两件事，不做任何检查**——启动条件自己先看（§2）。开机自启是另一条路径：
-`../services/swarm-uav-onboard.service`。
+**只做这两件事，不做任何检查**——启动条件自己先看（§2）。**不设开机自启**：机载栈只由本目录两个
+脚本（或从地面站 `../../tcp_to_ros/tools/onboard_ctl.sh` 批量）显式启停。
 
 ## 1. 用法
 
@@ -47,6 +47,4 @@ ssh ubuntu@192.168.5.71 'bash ~/catkin_swarm6-2/src/swarm_uav_executor/bashs/sto
 
 - 不 arm、不 OFFBOARD、不起飞、不发任务 `START`，也不启动其它 UAV。
 - 停止/重跑顺序：先停，确认 `pgrep -f uav_offboard_ego_real.launch` 为空，再启动；不要就地重启单机子集。
-- systemd 自启在跑时（`systemctl is-active swarm-uav-onboard.service`）用
-  `sudo systemctl stop swarm-uav-onboard.service`，不要用 `stop_onboard.sh` 硬杀。
-- 相关：`../../swarm_uav_interfaces/real_setup.md` §5、`../services/README.md`、`../../tcp_to_ros/tools/README.md`。
+- 相关：`../../swarm_uav_interfaces/real_setup.md` §5、`../../tcp_to_ros/tools/README.md`（§5.1 批量远程启停）。

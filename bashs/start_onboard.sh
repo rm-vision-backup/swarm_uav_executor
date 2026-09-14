@@ -5,7 +5,7 @@
 #     - 板钟：date +%s 应 ~1.79e9；仍是 1970 就先修时钟（要早于启动栈）
 #     - 本机身份：hostname -s 应为 UAVn（bridge 按它匹配 topology.yaml）
 #     - 没在跑：pgrep -f uav_offboard_ego_real.launch 为空（有则先 stop_onboard.sh）
-#   也不做开机自启（自启走 services/swarm-uav-onboard.service）。
+#   也不做开机自启：机载栈只由本脚本（或远程 onboard_ctl.sh）显式启动。
 #
 # 用法：
 #   bash src/swarm_uav_executor/bashs/start_onboard.sh                          # 启动

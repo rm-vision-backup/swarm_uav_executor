@@ -7,7 +7,6 @@
 # 用法：
 #   bash src/swarm_uav_executor/bashs/stop_onboard.sh
 #   ssh ubuntu@192.168.5.71 'bash ~/catkin_swarm6-2/src/swarm_uav_executor/bashs/stop_onboard.sh'
-# 注意：开机自启在跑时用 sudo systemctl stop swarm-uav-onboard.service，不要硬杀（unit 会重启它）。
 # 退出码：0 = 已停干净（或本来没跑）；2 = 还有残留。
 # =============================================================================
 set -u

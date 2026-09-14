@@ -51,11 +51,11 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 | `launch/uav_offboard_ego.launch` | **仿真**单机机载层（每机独立 ROS Master 11311–11325、SITL UDP FCU、仿真 topology） |
 | `launch/uav_offboard_ego_real.launch` | **实机**单机机载层：身份取本机 hostname（机载电脑 hostname 固定为 `UAVn`），桥接加载 `swarm_topology_bridge/config/topology.yaml`（port_offset=0），FCU 连接（`fcu_url` / `tgt_system`）沿用机载 MAVROS launch 的现场配置、本入口不传（不沿用 SITL localhost/仿真 UDP） |
 
-- 开机自启：`services/swarm-uav-onboard.service`（安装/启停见 `services/README.md`）。service
-  只启动本机程序，不循环启动其他 UAV；**不自动 arm / OFFBOARD / 起飞 / 任务 START**，实机由现场
-  遥控器完成 arm/OFFBOARD。
-- 手动启动/停止（现场或 ssh 手操时用）：`bashs/start_onboard.sh` / `bashs/stop_onboard.sh`，
-  等价 `real_setup.md` §5.1.1 + §5.1.2 方式 B；见 `bashs/README.md`。
+- 启动/停止：`bashs/start_onboard.sh` / `bashs/stop_onboard.sh`（现场或 ssh 手操），
+  等价 `real_setup.md` §5.1.1 + §5.1.2 方式 B；见 `bashs/README.md`。多机批量从地面站用
+  `tcp_to_ros/tools/onboard_ctl.sh`（见其 `README.md` §5.1）。只启动本机程序，不循环启动其他 UAV；
+  **不自动 arm / OFFBOARD / 起飞 / 任务 START**，实机由现场遥控器完成 arm/OFFBOARD。
+  **不设开机自启**：原 `services/`（systemd unit）已于 2026-09-14 删除（未在实机安装过）。
 - 身份边界：机载 ROS 运行时统一使用执行层 `UAVn`（`uav_id`、`exec_target`、hostname、
   topic/service 路径）；任务层 `Axx` 仅由 `tcp_to_ros` 处理，机载不做 Axx 反向映射。
 - 诊断日志：`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/runtime_logs/ego_planner`，不硬编码固定 home。
