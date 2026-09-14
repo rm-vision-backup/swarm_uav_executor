@@ -24,13 +24,24 @@ WS=/home/ub20tg/catkin_swarm6-2
 mkdir -p "$WS/.tmp/logs"
 PX4_ROOT=/home/ub20tg/PX4_Firmware
 PX4_BUILD="$PX4_ROOT/build/px4_sitl_default"
+# source 期间临时关掉 -u（L15 的契约不变）：ROS noetic 的
+# profile.d/1.ros_distro.sh:3 直接读未定义的 $ROS_DISTRO，nounset 下是**致命错** →
+# 整个非交互 shell 当场中止（2026-09-14 实测）。本地先 source 过 ROS 才不复现，
+# 从 ROS-less 的 shell 链进来（ssh/cron/包装 bash/新终端）必现，且 L105/106 的
+# 日志与 pid 文件都不会生成（现象 = 「什么都没发生」）。
+set +u
+# shellcheck source=/dev/null
 source /opt/ros/noetic/setup.bash
+# shellcheck source=/dev/null
 source "$WS/devel/setup.bash"
 # The PX4 launch files used by uav_offboard_ego.launch are not in the catkin
 # workspace.  Load the same Gazebo/PX4 environment used for the simulation
 # layer after sourcing catkin, otherwise each background roslaunch exits before
 # creating its ROS master and leaves an empty log.
+# （该脚本读 $ROS_PACKAGE_PATH，故一并放在关掉 -u 的这段里。）
+# shellcheck source=/dev/null
 source "$PX4_ROOT/Tools/setup_gazebo.bash" "$PX4_ROOT" "$PX4_BUILD"
+set -u
 export ROS_PACKAGE_PATH="$ROS_PACKAGE_PATH:$PX4_ROOT:$PX4_ROOT/Tools/sitl_gazebo"
 
 STARTUP_TIMEOUT_S=${STARTUP_TIMEOUT_S:-120}

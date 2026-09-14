@@ -50,5 +50,11 @@ ssh ubuntu@192.168.5.71 'bash ~/catkin_swarm6-2/src/swarm_uav_executor/bashs/sto
   读 `$ROS_DISTRO`，`set -u`（含 `set -eu`）下 source 会以 `ROS_DISTRO: unbound variable` 直接中止。
   从 GCS ssh 启动时环境里没有该变量，**必现**（2026-09-14 UAV13 实测：脚本第 1 步退出，转录文件
   都没建）；`start_onboard.sh` 用 `set +u` … `set -u` 包住两行 source，再写同类脚本照做。
+
+- **同类修复（2026-09-14 同批）**：`scripts/startup_offboard_ego.sh`（SITL 机载层顺序启动）与
+  `../swarm_simulation/bashs/env.sh`（被 `cleanup`/`phases`/`round_prepare_15sitl`/`status` 四处 source）
+  也各有一段裸 `source`；干净环境实测前者 `exit 1`（日志与 pid 都不生成）、后者 `exit 127`。
+  现已各自用 `set +u` … `set -u` 包住 source（`env.sh` 被 source，故 source 后立刻恢复 `set -u`，
+  调用方契约不变）。**新增任何 `source` ROS 的脚本都必须照此办理**。
 - 停止/重跑顺序：先停，确认 `pgrep -f uav_offboard_ego_real.launch` 为空，再启动；不要就地重启单机子集。
 - 相关：`../../swarm_uav_interfaces/real_setup.md` §5、`../../tcp_to_ros/tools/README.md`（§5.1 批量远程启停）。
