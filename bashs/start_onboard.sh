@@ -25,10 +25,16 @@ UAV=$(hostname -s)
 LOG="$WS/.tmp/logs/${UAV}_offboard_ego.log"
 
 cd "$WS"
+# ROS 的 setup.bash 会读未定义变量（/opt/ros/noetic/etc/catkin/profile.d/1.ros_distro.sh 第 3 行
+# 读 $ROS_DISTRO），本脚本是 set -eu：从 GCS ssh 过来时环境里没有 ROS_DISTRO，source 会以
+# "ROS_DISTRO: unbound variable" 直接中止，连 roslaunch 都起不来（2026-09-14 UAV13 实测）。
+# 故 source 期间临时关掉 -u。
+set +u
 # shellcheck source=/dev/null
 source /opt/ros/noetic/setup.bash
 # shellcheck source=/dev/null
 source devel/setup.bash
+set -u
 export ROS_HOME="$WS/.ros_home" ROS_LOG_DIR="$WS/.ros_home/log"   # 运行数据留工作区，不落 ~/.ros
 mkdir -p "$ROS_LOG_DIR" "$(dirname "$LOG")"
 
