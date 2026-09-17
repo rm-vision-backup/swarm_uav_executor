@@ -40,7 +40,7 @@ from mavros_msgs.msg import ParamValue
 from mavros_msgs.srv import CommandBool, ParamPush, ParamSet, SetMode
 
 ROS_SETUP = "/opt/ros/noetic/setup.bash"
-WS = "/home/ub20tg/catkin_swarm6-2"
+WS = "/home/yjq/catkin_swarm6-2"
 
 
 class TakeoffUAV:
