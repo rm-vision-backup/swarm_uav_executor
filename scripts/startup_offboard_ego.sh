@@ -47,6 +47,10 @@ export ROS_PACKAGE_PATH="$ROS_PACKAGE_PATH:$PX4_ROOT:$PX4_ROOT/Tools/sitl_gazebo
 STARTUP_TIMEOUT_S=${STARTUP_TIMEOUT_S:-120}
 EGO_REBOUND_UAVS=${EGO_REBOUND_UAVS:-}
 EGO_SAFETY_SUPERVISOR_MODE=${EGO_SAFETY_SUPERVISOR_MODE:-active}
+# 任务执行超时（s）覆盖 ego_swarm/task_timeout_s（canonical 默认 200 s）。
+# 留空 = 不传，行为与原先完全一致。长任务（如四机侦查航线 ~129 m）需显式给值，
+# 否则领机可能在航程未走完时被判 DRIVER_TIMEOUT（ego_swarm.py:436）。
+EGO_TASK_TIMEOUT_S=${EGO_TASK_TIMEOUT_S:-}
 
 case "$EGO_SAFETY_SUPERVISOR_MODE" in
   off|shadow|active) ;;
@@ -102,9 +106,11 @@ start_uav() {
   local neighbor_odom_topics
   local neighbor_intents
   local enable_rebound
+  local -a timeout_args=()
   neighbor_odom_topics=$(neighbor_topics "$idx" "mavros/local_position/odom")
   neighbor_intents=$(neighbor_topics "$idx" "trajectory_intent")
   enable_rebound=$(rebound_enabled "$idx")
+  [ -n "$EGO_TASK_TIMEOUT_S" ] && timeout_args+=(uav_task_timeout_s:=$EGO_TASK_TIMEOUT_S)
   export ROS_MASTER_URI="http://localhost:$master_port"
   export ROS_HOSTNAME=localhost
   nohup roslaunch swarm_uav_executor uav_offboard_ego.launch \
@@ -112,10 +118,10 @@ start_uav() {
     neighbor_odom_topics:=$neighbor_odom_topics \
     neighbor_intents:=$neighbor_intents enable_rebound:=$enable_rebound \
     safety_supervisor_mode:=$EGO_SAFETY_SUPERVISOR_MODE \
-    interfaces_version:=sitl-ego-combined \
+    interfaces_version:=sitl-ego-combined "${timeout_args[@]}" \
     > "$WS/.tmp/logs/${uav_name}_offboard_ego.log" 2>&1 &
   echo "$!" > "$WS/.tmp/logs/${uav_name}_offboard_ego.pid"
-  echo "started $uav_name (master=$master_port, tgt_system=$idx, rebound=$enable_rebound, safety=$EGO_SAFETY_SUPERVISOR_MODE, pid=$!)"
+  echo "started $uav_name (master=$master_port, tgt_system=$idx, rebound=$enable_rebound, safety=$EGO_SAFETY_SUPERVISOR_MODE, task_timeout=${EGO_TASK_TIMEOUT_S:-default}, pid=$!)"
 
   echo "waiting $uav_name ROS Master and MAVROS state (timeout=${STARTUP_TIMEOUT_S}s)"
   if ! timeout "$STARTUP_TIMEOUT_S" bash -c \
