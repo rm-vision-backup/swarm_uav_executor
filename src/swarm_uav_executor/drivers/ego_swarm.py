@@ -63,6 +63,11 @@ def _is_safety_hold_reason(reason: str) -> bool:
 
 _SETPOINT_HZ = 30.0
 _FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
+# 建好领机 odom 订阅后，等第一帧的宽限窗口。订阅建立与首帧到达之间有几十毫秒空档，
+# 若循环首轮就要求"已有数据"会误判 LEADER_LOST（2026-09-20 四机彩排实测：领机 odom
+# 全程 30 Hz 在发，任务却随机失败）。只对"从未收到过第一帧"生效；收到过数据后仍用
+# _FOLLOW_POSE_TIMEOUT_S 的严格新鲜度判据。
+_LEADER_ODOM_WARMUP_S = 3.0
 _FOLLOW_LOOP_HZ = 10.0         # follower PI control update rate
 
 # PositionTarget 契约（与 setpoint_relay 校验一致）：
@@ -498,6 +503,7 @@ class EgoSwarmDriver(MotionDriver):
         if offset is None:
             offset = (0.0, 0.0, 0.0)
         self._ensure_leader_odom_sub(leader_id)
+        leader_warmup_deadline = self._monotonic_clock() + _LEADER_ODOM_WARMUP_S
         integral = [0.0, 0.0, 0.0]
         loop_dt = 1.0 / _FOLLOW_LOOP_HZ
         publish_dt = 1.0 / _SETPOINT_HZ
@@ -516,7 +522,18 @@ class EgoSwarmDriver(MotionDriver):
                     leader_pose = self._last_leader_pose
                     leader_ts = self._last_leader_odom_mono_s
                     own_pose = self._last_pose
-                if leader_pose is None or leader_ts is None or now - leader_ts > _FOLLOW_POSE_TIMEOUT_S:
+                if leader_pose is None or leader_ts is None:
+                    # 从未收到第一帧领机 odom：宽限窗口内继续等（本轮回不计算目标、
+                    # 不发布 setpoint，由 setpoint_relay 保持当前目标）；超出窗口才判
+                    # LEADER_LOST。收到过数据后走下面的严格新鲜度判据。
+                    if now < leader_warmup_deadline:
+                        time.sleep(publish_dt)
+                        continue
+                    return MotionResult(
+                        False, "LEADER_LOST",
+                        "no leader odom within %.1fs of follow start" % _LEADER_ODOM_WARMUP_S,
+                    )
+                if now - leader_ts > _FOLLOW_POSE_TIMEOUT_S:
                     return MotionResult(False, "LEADER_LOST", "leader odom timed out")
                 if own_pose is None:
                     return MotionResult(False, "POSE_STALE", "no local pose for follower loop")

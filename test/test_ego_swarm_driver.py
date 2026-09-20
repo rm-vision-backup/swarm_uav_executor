@@ -3,6 +3,7 @@ import math
 import threading
 import time
 import unittest
+from unittest import mock
 
 from geometry_msgs.msg import PoseStamped
 from swarm_uav_interfaces.msg import UavTrajectoryIntent
@@ -326,13 +327,33 @@ class EgoSwarmDriverTest(unittest.TestCase):
                                delta=0.02)
 
     def test_follower_leader_lost(self):
+        # 从未收到任何领机 odom：宽限窗口用尽后必须判 LEADER_LOST。窗口调小以保持
+        # 测试快，语义不变（默认值见 ego_swarm._LEADER_ODOM_WARMUP_S）。
         driver, _ = self._driver()
         self._emit_pose(driver, 0.0, 0.0, 12.0)
         goal = MotionGoal(0, 0, 12, 0, command="FOLLOW_ROUTE", leader_id="A02",
                           formation_follow=True, layer_z=12.0)
-        result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 1.0)
+        with mock.patch("swarm_uav_executor.drivers.ego_swarm._LEADER_ODOM_WARMUP_S", 0.2):
+            result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 5.0)
         self.assertFalse(result.success)
         self.assertEqual(result.error_code, "LEADER_LOST")
+
+    def test_follower_survives_late_first_leader_odom(self):
+        # 回归测试（2026-09-20 四机彩排 LEADER_LOST 抢跑）：订阅刚建好、循环首轮
+        # 还没有领机 odom 时，只要首帧在宽限窗口内到达，任务就必须照常进行。
+        driver, _ = self._driver(steady_s=0.05)
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        goal = MotionGoal(0, 0, 12, 0, command="FOLLOW_ROUTE", leader_id="A02",
+                          formation_follow=True, layer_z=12.0)
+        timer = threading.Timer(0.3, self._emit_leader_odom, args=(driver, 0.0, 0.0, 12.0))
+        timer.start()
+        try:
+            with mock.patch("swarm_uav_executor.drivers.ego_swarm._LEADER_ODOM_WARMUP_S", 1.0):
+                result = driver.start_move_to(goal, threading.Event(), time.monotonic() + 3.0)
+        finally:
+            timer.cancel()
+        self.assertTrue(result.success, result.message)
+        self.assertEqual(driver._last_cmd_reply, "COMPLETED")
 
     def test_follower_emits_completed_when_formed(self):
         driver, _ = self._driver(steady_s=0.05)
