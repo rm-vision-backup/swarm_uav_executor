@@ -14,15 +14,18 @@
 #   gcs_port = 34580 - 1 + tgt_system
 set -u
 
+# 工作空间根 = 本脚本所在包的三级父目录（不写死某个用户的 home）
+WS=$(cd "$(dirname "$0")/../../.." && pwd)
+
 # 将 ROS 运行日志重定向到当前工作空间 .ros_home
-export ROS_HOME=/home/yjq/catkin_swarm6-2/.ros_home
-export ROS_LOG_DIR=/home/yjq/catkin_swarm6-2/.ros_home/log
+export ROS_HOME="$WS/.ros_home"
+export ROS_LOG_DIR="$WS/.ros_home/log"
 mkdir -p "$ROS_LOG_DIR"
 
-WS=/home/yjq/catkin_swarm6-2
 # 本脚本运行日志/pid 统一放工作空间 .tmp/logs（不使用 /tmp）
 mkdir -p "$WS/.tmp/logs"
-PX4_ROOT=/home/yjq/PX4_Firmware
+# PX4 固件根目录：默认 $HOME/PX4_Firmware，可用环境变量 PX4_ROOT 覆盖
+PX4_ROOT=${PX4_ROOT:-$HOME/PX4_Firmware}
 PX4_BUILD="$PX4_ROOT/build/px4_sitl_default"
 # source 期间临时关掉 -u（L15 的契约不变）：ROS noetic 的
 # profile.d/1.ros_distro.sh:3 直接读未定义的 $ROS_DISTRO，nounset 下是**致命错** →

@@ -63,7 +63,7 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 ## 构建与测试
 
 ```bash
-cd /home/yjq/catkin_swarm6-2
+cd "$HOME/catkin_swarm6-2"
 catkin build swarm_uav_interfaces swarm_uav_executor
 source devel/setup.bash
 catkin test swarm_uav_executor
@@ -75,8 +75,8 @@ catkin_test_results build/swarm_uav_executor/test_results
 为避免 ROS 运行日志散落在 `~/.ros/log`，本工作空间统一将运行日志重定向到 `.ros_home/`：
 
 ```bash
-export ROS_HOME=/home/yjq/catkin_swarm6-2/.ros_home
-export ROS_LOG_DIR=/home/yjq/catkin_swarm6-2/.ros_home/log
+export ROS_HOME="$HOME/catkin_swarm6-2/.ros_home"
+export ROS_LOG_DIR="$HOME/catkin_swarm6-2/.ros_home/log"
 mkdir -p "$ROS_LOG_DIR"
 ```
 

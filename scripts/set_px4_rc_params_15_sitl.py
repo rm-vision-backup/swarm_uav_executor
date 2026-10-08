@@ -26,7 +26,9 @@ from mavros_msgs.msg import ParamValue
 from mavros_msgs.srv import ParamGet, ParamPush, ParamSet
 
 ROS_SETUP = "/opt/ros/noetic/setup.bash"
-WS = "/home/yjq/catkin_swarm6-2"
+# 工作空间根 = 本脚本所在包的三级父目录（不写死某个用户的 home）
+WS = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
 
 # (参数名, 整数取值)：COM_RC_IN_MODE/NAV_RCL_ACT/COM_RCL_EXCEPT 均为 INT32
 RC_PARAMS = (
