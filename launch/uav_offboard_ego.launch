@@ -25,6 +25,8 @@
   <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
+  <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）：仿真也落，便于用同款文件复现现场问题。 -->
+  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/runtime_logs/health" />
 
   <!-- 1. MAVROS 对接本机 PX4 SITL 实例 -->
   <include file="$(find mavros)/launch/px4.launch">
@@ -50,6 +52,7 @@
     <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)"/>
     <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)"/>
     <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)"/>
+    <arg name="event_log_dir" value="$(arg runtime_log_dir)"/>
     <!-- arm/OFFBOARD and PX4 parameter setup belong to offboard_takeoff_15_sitl.py. -->
     <arg name="configure_px4_params" value="false" />
     <!-- 状态发布到全局 uav_task_state，供 swarm_bridge 订阅桥接至 GCS_A -->

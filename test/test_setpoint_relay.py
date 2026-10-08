@@ -225,5 +225,58 @@ class SetpointRelayTest(unittest.TestCase):
             self.assertEqual(out.header.stamp, i)
 
 
+class RelayEventSinkTest(unittest.TestCase):
+    """事件回调只报**边沿**（2026-10-08 增）：30 Hz tick 里不能逐帧刷事件。"""
+
+    def _relay(self, clock, sink):
+        relay = SetpointRelay(0.2, 1.0, monotonic_clock=clock, event_sink=sink)
+        relay.on_pose(make_pose(0.0, 0.0, 5.0), now=clock())
+        return relay
+
+    def test_mode_switch_hold_enter_and_exit_are_edge_triggered(self):
+        clock = FakeClock()
+        events = []
+        relay = self._relay(clock, lambda event, **fields: events.append((event, fields)))
+
+        relay.on_mode(True)                     # ego -> follower
+        relay.on_mode(True)                     # 重复一次：不应再报
+        for _ in range(3):                      # 连续多 tick 处于 HOLD：只报一条 hold_enter
+            relay.tick(now=clock(), stamp=1)
+        self.assertEqual([event for event, _ in events], ["mode_switch", "hold_enter"])
+        self.assertEqual(events[0][1]["selected"], "follower")
+        self.assertEqual(events[1][1]["anchor"], "fresh_pose")
+
+        clock.advance(0.5)
+        relay.on_candidate("follower", make_follower(11.0, 0.0, 12.0, 1.0, 0.0, 0.0),
+                           now=clock())
+        relay.tick(now=clock(), stamp=2)
+        relay.tick(now=clock(), stamp=3)        # 已出 HOLD：不再报
+        self.assertEqual([event for event, _ in events],
+                         ["mode_switch", "hold_enter", "hold_exit"])
+        self.assertAlmostEqual(events[2][1]["held_s"], 0.5, places=3)
+
+    def test_no_safe_hold_is_reported_once(self):
+        clock = FakeClock()
+        events = []
+        relay = SetpointRelay(0.2, 1.0, monotonic_clock=clock,
+                              event_sink=lambda event, **fields: events.append(event))
+        # 既没有新鲜 pose 也没有已锁存 HOLD → 本 tick 不发任何 raw setpoint
+        for _ in range(4):
+            self.assertIsNone(relay.tick(now=clock(), stamp=1))
+        self.assertEqual(events, ["no_safe_hold"])
+
+    def test_sink_exception_never_breaks_control(self):
+        clock = FakeClock()
+
+        def boom(event, **fields):
+            raise RuntimeError("sink down")
+
+        relay = self._relay(clock, boom)
+        relay.on_mode(True)
+        out = relay.tick(now=clock(), stamp=1)   # 不抛，仍返回 HOLD 帧
+        self.assertIsNotNone(out)
+        self.assertEqual(out.type_mask, MASK_HOLD)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,6 +20,9 @@
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
   <arg name="neighbor_intents" default="" />
+  <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）。下一轮实飞排查靠它：
+       任务窗口 rosout 本就无输出，这些文件是唯一能定层的证据。 -->
+  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/runtime_logs/health" />
   <!-- enable_rebound/uav_task_timeout_s/ego_hold_timeout_s/safety_supervisor_mode
        业务默认来自 planner/executor/safety canonical YAML；此处 arg 默认空。 -->
   <arg name="enable_rebound" default="" />
@@ -53,6 +56,7 @@
     <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
     <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
     <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
+    <arg name="event_log_dir" value="$(arg runtime_log_dir)" />
     <arg name="configure_px4_params" value="false" />
     <arg name="state_topic" value="/uav_task_state" />
   </include>
@@ -61,6 +65,7 @@
   <include file="$(find swarm_topology_bridge)/launch/bridge_group_a_real.launch">
     <arg name="config" value="$(arg topology_config)" />
     <arg name="uav_name" value="$(arg uav_name)" />
+    <arg name="health_log_dir" value="$(arg runtime_log_dir)" />
   </include>
 
   <!-- 4. 一次性全局原点设置和 MAVROS 回读确认。 -->

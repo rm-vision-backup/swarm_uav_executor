@@ -77,8 +77,12 @@ class SetpointRelay:
 
     def __init__(self, candidate_timeout_s: float = 0.2,
                  local_pose_timeout_s: float = 1.0,
-                 monotonic_clock=time.monotonic):
+                 monotonic_clock=time.monotonic, event_sink=None):
         self._clock = monotonic_clock
+        # 事件回调（2026-10-08 增）：只记**边沿**（选源切换 / HOLD 进 / HOLD 出 / 无安全 HOLD），
+        # 且回调异常一律吞掉——relay 以 30 Hz 独占 /mavros/setpoint_raw/local，这条路径不能被观测
+        # 拖慢或打断。回调本身由调用方保证非阻塞（见 event_log.EventLog）。
+        self._event_sink = event_sink
         self._candidate_timeout_s = float(candidate_timeout_s)
         self._pose_timeout_s = float(local_pose_timeout_s)
         self._selected = "ego"
@@ -88,19 +92,32 @@ class SetpointRelay:
         self._pose: Optional[Tuple[PoseStamped, float]] = None
         self._hold: Optional[Tuple[float, float, float, float]] = None  # active lock
         self._last_hold: Optional[Tuple[float, float, float, float]] = None  # verified lock
+        self._hold_since: Optional[float] = None
+        self._no_safe_hold_logged = False
         self._error_since_mono = 0.0
+
+    def _emit(self, event, **fields) -> None:
+        if self._event_sink is None:
+            return
+        try:
+            self._event_sink(event, **fields)
+        except Exception:                             # noqa: BLE001 - 观测绝不打断控制
+            pass
 
     # --- callbacks ---
 
     def on_mode(self, select_follower: bool) -> None:
         new = "follower" if select_follower else "ego"
         if new != self._selected:
+            previous = self._selected
             self._selected = new
             self._generation[new] += 1
             self._cache.pop(new, None)
             # Re-enter HOLD at the current pose until a fresh post-switch
             # candidate arrives; last verified hold stays as a fallback.
             self._hold = None
+            self._emit("mode_switch", previous=previous, selected=new,
+                       generation=self._generation[new])
 
     def on_candidate(self, source: str, msg: PositionTarget,
                      now: Optional[float] = None) -> bool:
@@ -136,6 +153,12 @@ class SetpointRelay:
         if cached is not None and cached[2] >= self._generation[self._selected] \
                 and (now - cached[1]) <= self._candidate_timeout_s:
             # Valid fresh candidate from the selected source.
+            if self._hold is not None:
+                self._emit("hold_exit", source=self._selected,
+                           held_s=(None if self._hold_since is None
+                                   else round(now - self._hold_since, 3)))
+                self._hold_since = None
+            self._no_safe_hold_logged = False
             self._hold = None  # exit internal HOLD
             msg = cached[0]
             out = self._from_candidate(msg)
@@ -165,9 +188,24 @@ class SetpointRelay:
             if self._pose is not None and (now - self._pose[1]) <= self._pose_timeout_s:
                 self._hold = self._capture(self._pose[0])
                 self._last_hold = self._hold
+                self._hold_since = now
+                self._no_safe_hold_logged = False
+                self._emit("hold_enter", anchor="fresh_pose",
+                           pose_age_s=round(now - self._pose[1], 3),
+                           position=[round(value, 3) for value in self._hold[:3]])
             elif self._last_hold is not None:
                 self._hold = self._last_hold
+                self._hold_since = now
+                self._no_safe_hold_logged = False
+                self._emit("hold_enter", anchor="last_hold",
+                           position=[round(value, 3) for value in self._hold[:3]])
             else:
+                if not self._no_safe_hold_logged:
+                    # 第三种状态：连 HOLD 锚点都拿不到 → 本 tick 不发任何 raw setpoint。
+                    self._no_safe_hold_logged = True
+                    self._emit("no_safe_hold",
+                               pose_age_s=(None if self._pose is None
+                                           else round(now - self._pose[1], 3)))
                 if now - self._error_since_mono > 2.0:
                     self._error_since_mono = now
                     import sys

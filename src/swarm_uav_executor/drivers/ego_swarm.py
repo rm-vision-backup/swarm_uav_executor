@@ -35,6 +35,7 @@ from mavros_msgs.msg import PositionTarget
 from std_msgs.msg import Bool, Empty, Float64, String
 
 from .base import MotionDriver
+from ..event_log import EventLog, default_event_log_path
 from ..models import DriverHealth, HoldGoal, MotionGoal, MotionResult
 
 _STATE_EXECUTING = "EXECUTING"
@@ -112,7 +113,8 @@ class EgoSwarmDriver(MotionDriver):
                   layer_move_to=15.0, layer_follow_route=12.0,
                   layer_fault_exit=8.0, layer_tolerance_m=0.5,
                   waypoint_densify_spacing=3.0,
-                  follower_setpoint_topic="/setpoint/follower"):
+                  follower_setpoint_topic="/setpoint/follower",
+                  event_log_dir="", event_log_uav=""):
         # Onboard premise: this node normally runs without a namespace prefix
         # (like MAVROS /mavros/*), so an empty namespace publishes to plain
         # /setpoint /exec_state etc. A non-empty namespace (e.g. "UAV1") is
@@ -226,6 +228,11 @@ class EgoSwarmDriver(MotionDriver):
         self._waypoint_densify_spacing = float(waypoint_densify_spacing)
         self._arm_service = arm_service
         self._mode_service = mode_service
+        # 跟随环事件日志（2026-10-08 增）：独立文件、非阻塞入队（见 event_log.py）。
+        # 任务窗口 rosout 本就无输出，这是"领机 odom 到没到、为什么退出"的唯一直接证据。
+        self._events = EventLog(
+            default_event_log_path(event_log_dir, event_log_uav, "follower"),
+            uav=event_log_uav, component="follower")
 
     def _on_state(self, msg):
         with self._lock:
@@ -503,25 +510,43 @@ class EgoSwarmDriver(MotionDriver):
         if offset is None:
             offset = (0.0, 0.0, 0.0)
         self._ensure_leader_odom_sub(leader_id)
-        leader_warmup_deadline = self._monotonic_clock() + _LEADER_ODOM_WARMUP_S
+        loop_start_mono = self._monotonic_clock()
+        leader_warmup_deadline = loop_start_mono + _LEADER_ODOM_WARMUP_S
         integral = [0.0, 0.0, 0.0]
         loop_dt = 1.0 / _FOLLOW_LOOP_HZ
         publish_dt = 1.0 / _SETPOINT_HZ
         last_calc = None
         last_setpoint = None
         arrived_since = None
+        first_frame_logged = False
+        prev_leader_ts = None
+        pose_stale_logged = None
+        self._events.emit("follower_start", leader_id=leader_id,
+                          leader_topic=self._leader_odom_topic, offset=list(offset),
+                          warmup_s=_LEADER_ODOM_WARMUP_S,
+                          pose_timeout_s=_FOLLOW_POSE_TIMEOUT_S)
+
+        def _finish(result, **fields):
+            self._events.emit("follower_exit",
+                              reason=(result.error_code or "SUCCESS"),
+                              message=result.message,
+                              ran_s=round(self._monotonic_clock() - loop_start_mono, 3),
+                              **fields)
+            return result
+
         self._direct_control_pub.publish(Bool(True))
         try:
             while not self._shutdown:
                 if cancel is not None and cancel.is_set():
-                    return MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD")
+                    return _finish(MotionResult(False, "COMMAND_HELD", "motion cancelled by HOLD"))
                 if self._monotonic_clock() >= float(deadline):
-                    return MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded")
+                    return _finish(MotionResult(False, "LOCAL_TIMEOUT", "motion deadline exceeded"))
                 now = self._monotonic_clock()
                 with self._lock:
                     leader_pose = self._last_leader_pose
                     leader_ts = self._last_leader_odom_mono_s
                     own_pose = self._last_pose
+                    own_pose_ts = self._last_pose_mono_s
                 if leader_pose is None or leader_ts is None:
                     # 从未收到第一帧领机 odom：宽限窗口内继续等（本轮回不计算目标、
                     # 不发布 setpoint，由 setpoint_relay 保持当前目标）；超出窗口才判
@@ -529,19 +554,43 @@ class EgoSwarmDriver(MotionDriver):
                     if now < leader_warmup_deadline:
                         time.sleep(publish_dt)
                         continue
-                    return MotionResult(
-                        False, "LEADER_LOST",
-                        "no leader odom within %.1fs of follow start" % _LEADER_ODOM_WARMUP_S,
+                    return _finish(
+                        MotionResult(
+                            False, "LEADER_LOST",
+                            "no leader odom within %.1fs of follow start" % _LEADER_ODOM_WARMUP_S,
+                        ),
+                        leader_age_s=None,
                     )
+                if not first_frame_logged:
+                    # 首帧等待耗时：2026-09-23 四机轮 A10/A13 卡在"3 s 一帧未到"，
+                    # 这个数就是当时缺的那条证据。
+                    first_frame_logged = True
+                    self._events.emit("leader_odom_first_frame",
+                                      wait_s=round(now - loop_start_mono, 3))
+                if prev_leader_ts is not None and leader_ts - prev_leader_ts > 0.5:
+                    self._events.emit("leader_odom_gap",
+                                      gap_s=round(leader_ts - prev_leader_ts, 3))
+                prev_leader_ts = leader_ts
+                if own_pose_ts is not None and now - own_pose_ts > self.pose_timeout_s:
+                    # 只记录不改行为：跟随环当前对自身位姿没有新鲜度检查（不对称），
+                    # 是否要硬失败属控制策略决定，这里先把事实拍下来。
+                    if pose_stale_logged is None or now - pose_stale_logged > 1.0:
+                        pose_stale_logged = now
+                        self._events.emit("own_pose_stale",
+                                          age_s=round(now - own_pose_ts, 3))
                 if now - leader_ts > _FOLLOW_POSE_TIMEOUT_S:
-                    return MotionResult(False, "LEADER_LOST", "leader odom timed out")
+                    return _finish(MotionResult(False, "LEADER_LOST", "leader odom timed out"),
+                                   leader_age_s=round(now - leader_ts, 3))
                 if own_pose is None:
-                    return MotionResult(False, "POSE_STALE", "no local pose for follower loop")
+                    return _finish(MotionResult(False, "POSE_STALE",
+                                                "no local pose for follower loop"))
                 distance = self._distance_breach(own_pose)
                 if distance is not None:
-                    return MotionResult(
-                        False, "MIN_DISTANCE_BREACH",
-                        self._distance_breach_message(distance, "follower PI control"))
+                    return _finish(
+                        MotionResult(
+                            False, "MIN_DISTANCE_BREACH",
+                            self._distance_breach_message(distance, "follower PI control")),
+                        distance_m=round(distance, 3))
                 target = (leader_pose.position.x + offset[0],
                           leader_pose.position.y + offset[1],
                           leader_pose.position.z + offset[2])
@@ -583,13 +632,13 @@ class EgoSwarmDriver(MotionDriver):
                         arrived_since = now
                     elif now - arrived_since >= self.steady_s:
                         self._emit_completed()
-                        return MotionResult(True, "", "follower formation reached")
+                        return _finish(MotionResult(True, "", "follower formation reached"))
                 else:
                     arrived_since = None
                 time.sleep(publish_dt)
         finally:
             self._direct_control_pub.publish(Bool(False))
-        return MotionResult(False, "SHUTTING_DOWN", "driver shutting down")
+        return _finish(MotionResult(False, "SHUTTING_DOWN", "driver shutting down"))
 
     def _near(self, own, target):
         dx = own.position.x - target.position.x
@@ -673,6 +722,7 @@ class EgoSwarmDriver(MotionDriver):
 
     def shutdown(self):
         self._shutdown = True
+        self._events.close()
 
     @classmethod
     def from_ros_params(cls):
@@ -713,6 +763,8 @@ class EgoSwarmDriver(MotionDriver):
                 "~ego_swarm/configure_px4_params", False),
             px4_param_set_timeout_s=rospy.get_param(
                 "~ego_swarm/px4_param_set_timeout_s", 5.0),
+            event_log_dir=rospy.get_param("~ego_swarm/event_log_dir", ""),
+            event_log_uav=str(exec_target or ""),
             px4_params={
                 "COM_RCL_EXCEPT": rospy.get_param(
                     "~ego_swarm/com_rcl_except", 4),

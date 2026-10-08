@@ -29,6 +29,7 @@ from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import PositionTarget
 from std_msgs.msg import Bool
 
+from swarm_uav_executor.event_log import EventLog, default_event_log_path
 from swarm_uav_executor.setpoint_relay import SetpointRelay
 
 
@@ -55,7 +56,15 @@ def main() -> None:
     local_pose_timeout_s = _finite_positive(
         rospy.get_param("~local_pose_timeout_s", 1.0), "local_pose_timeout_s")
 
-    relay = SetpointRelay(candidate_timeout_s, local_pose_timeout_s)
+    # 事件日志（2026-10-08 增）：独立文件、非阻塞入队。relay 是 /mavros/setpoint_raw/local
+    # 的唯一发布者，这条路径不能被文件 IO 拖慢（见 event_log.py 的非阻塞契约）。
+    exec_target = str(rospy.get_param("/exec_target", "") or "")
+    events = EventLog(
+        default_event_log_path(rospy.get_param("~event_log_dir", ""), exec_target, "relay"),
+        uav=exec_target, component="relay",
+        warn=lambda message: rospy.logerr_throttle(30.0, "setpoint_relay: %s", message))
+    rospy.on_shutdown(events.close)
+    relay = SetpointRelay(candidate_timeout_s, local_pose_timeout_s, event_sink=events.emit)
     pub = rospy.Publisher(output_topic, PositionTarget, queue_size=1)
 
     rospy.Subscriber(ego_topic, PositionTarget,

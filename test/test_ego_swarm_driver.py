@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+import json
 import math
+import os
+import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -299,6 +303,41 @@ class EgoSwarmDriverTest(unittest.TestCase):
         # 进入 follower 先置 true（init 已置 false），退出 finally 置 false。
         self.assertTrue(any(m.data for m in driver._direct_control_pub.msgs[:-1]))
         self.assertFalse(driver._direct_control_pub.msgs[-1].data)
+
+    def test_follower_writes_event_log(self):
+        """跟随环事件落盘（2026-10-08 增）：接线正确性由本用例守住。
+
+        没有它，最可能的失败模式是"参数名写错 → 实飞时静默无日志"，下一轮又是黑箱。
+        """
+        tmp = tempfile.mkdtemp(prefix="follower_events_")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        driver, _ = self._driver(event_log_dir=tmp, event_log_uav="UAV8")
+        self._emit_pose(driver, 0.0, 0.0, 12.0)
+        goal = MotionGoal(0, 0, 12, 0.0, command="FOLLOW_ROUTE", leader_id="A02",
+                          formation_follow=True, layer_z=12.0)
+        cancel = threading.Event()
+        result_holder = {}
+        thread = threading.Thread(
+            target=lambda: result_holder.update(
+                result=driver.start_move_to(goal, cancel, time.monotonic() + 3.0)),
+            daemon=True)
+        thread.start()
+        time.sleep(0.2)
+        self._emit_leader_odom(driver, 5.0, 0.0, 12.0)      # 迟到首帧
+        time.sleep(0.2)
+        cancel.set()
+        thread.join(2.0)
+
+        path = os.path.join(tmp, "UAV8_follower_events.jsonl")
+        driver.shutdown()
+        with open(path) as handle:
+            records = [json.loads(line) for line in handle if line.strip()]
+        events = [record["event"] for record in records]
+        self.assertEqual(events[0], "follower_start")
+        self.assertEqual(records[0]["leader_id"], "A02")
+        self.assertIn("leader_odom_first_frame", events)
+        self.assertEqual(events[-1], "follower_exit")
+        self.assertEqual(records[-1]["reason"], "COMMAND_HELD")
 
     def test_follower_pi_clamped(self):
         driver, _ = self._driver(follower_p_gain=1.0, follower_i_gain=0.0,

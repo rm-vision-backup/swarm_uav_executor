@@ -28,6 +28,10 @@
   <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
+  <!-- 执行器/relay 事件日志目录（2026-10-08 增）。arg 默认空、仅非空时条件写入——
+       仓库约定：launch 不内联业务默认；rostest 展开本 launch 时不应往真实目录落文件。
+       上层实机/仿真入口显式传入 runtime_logs/health。 -->
+  <arg name="event_log_dir" default="" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the
        Python EgoSwarmDriver and topology bridge can discover them. -->
@@ -74,6 +78,7 @@
     <param name="rate_hz" value="30.0" />
     <param name="candidate_timeout_s" value="0.2" />
     <param name="local_pose_timeout_s" value="1.0" />
+    <param name="event_log_dir" value="$(arg event_log_dir)" if="$(eval arg('event_log_dir') != '')" />
   </node>
 
   <node pkg="swarm_uav_executor" type="uav_executor_node.py"
@@ -100,5 +105,7 @@
     <param name="ego_swarm/leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <param name="ego_swarm/neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
     <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" if="$(eval arg('configure_px4_params') != '')" />
+    <!-- 跟随环事件日志（领机首帧/空档/退出原因）——不经 rosout，直接写文件。 -->
+    <param name="ego_swarm/event_log_dir" value="$(arg event_log_dir)" if="$(eval arg('event_log_dir') != '')" />
   </node>
 </launch>
