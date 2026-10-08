@@ -16,7 +16,7 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - `MOVE_TO`、`FOLLOW_ROUTE`、`FAULT_EXIT` 分别使用 15/12/8 m 动作层；严格垂直段冻结 x/y/yaw，其他非 follower 航段使用 EGO，followers 使用 PI+编队偏置。
 - EGO launch 的 `safety_supervisor_mode` 默认 `active`（方案 Y：EMERGENCY 只置位，
   制动由 replan 线程提交）；预测诊断写入工作区
-  `runtime_logs/ego_planner/UAVn-ego-planner.log`。监督层细节见
+  `.ros_home/log/ego_planner/UAVn-ego-planner.log`。监督层细节见
   `ego_planner_driver/README.md`。
 - EGO 巡航、垂直段与 follower PI 对邻机实施半径 1.0 m 的三维球形中心距运行时门禁；
   三维 Euclidean 中心距小于 1.0 m 时返回失败并触发整批 HOLD（恰好 1.0 m 安全，
@@ -58,7 +58,7 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
   **不设开机自启**：原 `services/`（systemd unit）已于 2026-09-14 删除（未在实机安装过）。
 - 身份边界：机载 ROS 运行时统一使用执行层 `UAVn`（`uav_id`、`exec_target`、hostname、
   topic/service 路径）；任务层 `Axx` 仅由 `tcp_to_ros` 处理，机载不做 Axx 反向映射。
-- 诊断日志：`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/runtime_logs/ego_planner`，不硬编码固定 home。
+- 诊断日志：`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/.ros_home/log/ego_planner`，不硬编码固定 home。
 
 ## 构建与测试
 
@@ -88,17 +88,17 @@ mkdir -p "$ROS_LOG_DIR"
 executor / `state_reporter` / `setpoint_relay` 运行期零日志语句，跟随环为何落 `LEADER_LOST`、relay 何时
 切源或进 HOLD，只能事后从 ulog 反推。为下一次实飞能直接定因，新增两个**独立文件**事件日志：
 
-| 文件（默认 `<ws>/.runtime_logs/health/`，隐藏目录） | 内容 |
+| 文件（默认 `<ws>/.ros_home/log/health/`） | 内容 |
 |---|---|
 | `<UAV>_follower_events.jsonl` | 跟随环：`follower_start`（领机 id/话题/偏移）、`leader_odom_first_frame(wait_s)`、`leader_odom_gap`、`own_pose_stale`（只记录，不改控制行为）、`follower_exit(reason=…, leader_age_s)` |
 | `<UAV>_relay_events.jsonl` | relay：`mode_switch`（选源切换）、`hold_enter`（锚点来源/位姿/年龄）、`hold_exit`、`no_safe_hold`（连 HOLD 锚点都拿不到，本 tick 不发 setpoint） |
 
-**归置约定**：落在**工作区的隐藏目录 `.runtime_logs/health/`**（与 `.ros_home` 同风格），与 planner 诊断
-（`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/runtime_logs/ego_planner`，见上）同一根目录、同一先例。
-**刻意不经 rosout / `.ros_home`**：任务窗口 rosout 本就无输出（这正是要修的黑箱），诊断类文件日志一律
-直接用文件写。目录由代码按需 `makedirs`，无需改启动脚本。
+**归置约定**：落在**工作区运行日志根 `.ros_home/log/health/`**，与 planner 诊断
+（`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/.ros_home/log/ego_planner`，见上）同根——现场只记一个日志根。
+**刻意不经 rosout**：任务窗口 rosout 本就无输出（这正是要修的黑箱），诊断类文件日志一律直接用文件写。
+目录由代码按需 `makedirs`，无需改启动脚本。
 
-**采集**：`src/tcp_to_ros/tools/log_fetch.sh` 第 ④ 段会把 `.runtime_logs/health/*.jsonl` 收进采集包的
+**采集**：`src/tcp_to_ros/tools/log_fetch.sh` 第 ④ 段会把 `.ros_home/log/health/*.jsonl` 收进采集包的
 `onboard/health/`（固定文件名追加写，机上超 32 MB 时只留尾部＝最近一次任务的数据）。
 GCS 侧同名文件（在 GCS 自己的工作区里）不在该脚本范围，需随 GCS 日志手工归档。
 
@@ -110,7 +110,7 @@ GCS 侧同名文件（在 GCS 自己的工作区里）不在该脚本范围，�
 不逐帧刷盘；关闭目录（`event_log_dir` 为空）= 不写 param、不建文件。
 
 相关参数：跟随环 `~ego_swarm/event_log_dir`、relay `~event_log_dir`；上层 launch `event_log_dir`
-（`uav_executor_ego.launch` 默认空、仅非空时条件写入；实机/仿真入口传 `.runtime_logs/health`）。
+（`uav_executor_ego.launch` 默认空、仅非空时条件写入；实机/仿真入口传 `.ros_home/log/health`）。
 背景与定层口径见 `quality_reports/2026-10-08_two_rounds_coverage_failure_root_cause.md`。
 
 ## Mock 启动

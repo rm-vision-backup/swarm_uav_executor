@@ -27,10 +27,10 @@
        仅命令行显式覆盖时条件写入（诊断可 shadow/off）。 -->
   <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
-       default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
+       default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
   <!-- 执行器/relay 事件日志目录（2026-10-08 增）。arg 默认空、仅非空时条件写入——
        仓库约定：launch 不内联业务默认；rostest 展开本 launch 时不应往真实目录落文件。
-       上层实机/仿真入口显式传入 .runtime_logs/health。 -->
+       上层实机/仿真入口显式传入 .ros_home/log/health。 -->
   <arg name="event_log_dir" default="" />
 
   <!-- Identity parameters live at global scope (/uav_id, /exec_target) the

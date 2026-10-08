@@ -38,7 +38,7 @@ ssh ubuntu@192.168.5.71 'bash ~/catkin_swarm6-2/src/swarm_uav_executor/bashs/sto
 |---|---|
 | 终端全量转录 | `~/catkin_swarm6-2/.tmp/logs/${UAV}_offboard_ego.log`（`log_fetch.sh` 采集此名） |
 | ROS 运行日志 | `~/catkin_swarm6-2/.ros_home/log/<session>/` |
-| planner 诊断 | `~/catkin_swarm6-2/runtime_logs/ego_planner/` |
+| planner 诊断 | `~/catkin_swarm6-2/.ros_home/log/ego_planner/` |
 
 转录是**追加**（`script -a`）：重跑同一台不会丢旧内容，要看本轮就从最后一行的
 `===== UAVn 启动 <时间> =====` 分隔行往下读。

@@ -15,7 +15,7 @@
 #
 # 输出：终端实时显示，同时追加转录到 <ws>/.tmp/logs/${UAV}_offboard_ego.log（log_fetch.sh 采集此名）。
 #   追加不覆盖：本轮从最后一行 `===== UAVn 启动 <时间> =====` 往下读。
-#   ROS 运行日志落 <ws>/.ros_home/log/<session>/，planner 诊断落 <ws>/runtime_logs/ego_planner/。
+#   ROS 运行日志落 <ws>/.ros_home/log/<session>/，planner 诊断落 <ws>/.ros_home/log/ego_planner/。
 # 退出码：roslaunch 的退出码（script -e 透传）。
 # =============================================================================
 set -eu

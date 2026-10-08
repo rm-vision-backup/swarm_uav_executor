@@ -24,9 +24,10 @@
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
   <arg name="diagnostic_log_dir"
-       default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
-  <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）：仿真也落，便于用同款文件复现现场问题。 -->
-  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/.runtime_logs/health" />
+       default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
+  <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）：仿真也落，便于用同款文件复现现场问题。
+       与 ROS 自身日志同根（.ros_home/log/），采集脚本按同一路径回取。 -->
+  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/.ros_home/log/health" />
 
   <!-- 1. MAVROS 对接本机 PX4 SITL 实例 -->
   <include file="$(find mavros)/launch/px4.launch">

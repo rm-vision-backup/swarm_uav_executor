@@ -75,7 +75,7 @@ class EgoLaunchConfigTest(unittest.TestCase):
         # launch arg 默认空，param 仅在命令行显式传入时条件写入。
         self.assertEqual(self.args.get("safety_supervisor_mode"), "")
         self.assertTrue(self.args.get("diagnostic_log_dir", "").endswith(
-            "/runtime_logs/ego_planner"))
+            "/.ros_home/log/ego_planner"))
         self.assertEqual(self.planner_params.get("safety_supervisor_mode"),
                          "$(arg safety_supervisor_mode)")
         self.assertIn("arg('safety_supervisor_mode')",

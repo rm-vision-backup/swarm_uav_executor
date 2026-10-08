@@ -18,11 +18,11 @@
   <arg name="topology_config"
        default="$(find swarm_topology_bridge)/config/topology.yaml" />
   <arg name="diagnostic_log_dir"
-       default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
+       default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
   <arg name="neighbor_intents" default="" />
   <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）。下一轮实飞排查靠它：
        任务窗口 rosout 本就无输出，这些文件是唯一能定层的证据。 -->
-  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/.runtime_logs/health" />
+  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/.ros_home/log/health" />
   <!-- enable_rebound/uav_task_timeout_s/ego_hold_timeout_s/safety_supervisor_mode
        业务默认来自 planner/executor/safety canonical YAML；此处 arg 默认空。 -->
   <arg name="enable_rebound" default="" />
