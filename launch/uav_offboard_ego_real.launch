@@ -30,6 +30,13 @@
   <arg name="formation_offsets" default="{}" />
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
+  <!-- 无桨地面联调（不 arm/不 OFFBOARD）：noprop:=true 把 mavros_state_topic 置空，跳过
+       PREPARE 的 connected/armed/OFFBOARD 门（驱动侧 ego_swarm.py 仅在该参数非空时检查）。
+       默认 false ⇒ 实飞行为零影响。用开关而非直接传空串，是因为 roslaunch 命令行会丢弃空值
+       参数（rosgraph/names.py load_mappings 的 `if src and dst`），arg:= 无法置空。
+       置空同时跳过 connected 检查 ⇒ 起栈后须人工确认 /mavros/state。 -->
+  <arg name="noprop" default="false" />
+  <arg name="mavros_state_topic" default="/mavros/state" />
   <arg name="uav_task_timeout_s" default="" />
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
@@ -52,6 +59,9 @@
     <arg name="formation_offsets" value="$(arg formation_offsets)" />
     <arg name="leader_odom_topic_prefix" value="$(arg leader_odom_topic_prefix)" />
     <arg name="neighbor_odom_topics" value="$(arg neighbor_odom_topics)" />
+    <!-- noprop 时置空（$(eval) 里参数经 YAML 解析，"false" 即 Python False）。 -->
+    <arg name="mavros_state_topic"
+         value="$(eval '' if arg('noprop') else arg('mavros_state_topic'))" />
     <arg name="uav_task_timeout_s" value="$(arg uav_task_timeout_s)" />
     <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
     <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />

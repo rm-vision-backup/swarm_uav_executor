@@ -251,5 +251,37 @@ class MavrosExecutorLaunchConfigTest(unittest.TestCase):
             self.assertIn(f"arg('{arg}')", _param_if(self.node, name), name)
 
 
+class OnboardNoPropLaunchConfigTest(unittest.TestCase):
+    """uav_offboard_ego_real.launch：无桨联调开关 `noprop` 只做"置空转发"，默认不动实飞行为。
+
+    不带 noprop 时 `mavros_state_topic` 必须还是 /mavros/state —— prepare() 的
+    connected/armed/OFFBOARD 门照旧（ego_swarm.py:710-721）；只有 noprop:=true 才置空，
+    供 `no_prop_link_test.md` 的地面 dry-run 使用。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        launch = Path(__file__).resolve().parents[1] / "launch" / "uav_offboard_ego_real.launch"
+        cls.root = ET.parse(str(launch)).getroot()
+        cls.args = {item.attrib["name"]: item.attrib.get("default")
+                    for item in cls.root.findall("arg")}
+        cls.include_args = {
+            item.attrib["name"]: item.attrib.get("value")
+            for include in cls.root.findall("include")
+            if "uav_executor_ego.launch" in include.attrib.get("file", "")
+            for item in include.findall("arg")
+        }
+
+    def test_noprop_is_opt_in_and_defaults_off(self):
+        self.assertEqual(self.args.get("noprop"), "false")
+        self.assertEqual(self.args.get("mavros_state_topic"), "/mavros/state")
+
+    def test_state_topic_blanked_only_through_noprop_guard(self):
+        value = self.include_args.get("mavros_state_topic")
+        self.assertIsNotNone(value, "executor include 必须转发 mavros_state_topic")
+        self.assertIn("arg('noprop')", value)
+        self.assertIn("arg('mavros_state_topic')", value)
+
+
 if __name__ == "__main__":
     unittest.main()
