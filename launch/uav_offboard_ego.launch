@@ -26,7 +26,7 @@
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/runtime_logs/ego_planner" />
   <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）：仿真也落，便于用同款文件复现现场问题。 -->
-  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/runtime_logs/health" />
+  <arg name="runtime_log_dir" default="$(optenv HOME /tmp)/catkin_swarm6-2/.runtime_logs/health" />
 
   <!-- 1. MAVROS 对接本机 PX4 SITL 实例 -->
   <include file="$(find mavros)/launch/px4.launch">

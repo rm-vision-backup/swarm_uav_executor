@@ -88,26 +88,29 @@ mkdir -p "$ROS_LOG_DIR"
 executor / `state_reporter` / `setpoint_relay` 运行期零日志语句，跟随环为何落 `LEADER_LOST`、relay 何时
 切源或进 HOLD，只能事后从 ulog 反推。为下一次实飞能直接定因，新增两个**独立文件**事件日志：
 
-| 文件（`<runtime_logs>/health/`） | 内容 |
+| 文件（默认 `<ws>/.runtime_logs/health/`，隐藏目录） | 内容 |
 |---|---|
 | `<UAV>_follower_events.jsonl` | 跟随环：`follower_start`（领机 id/话题/偏移）、`leader_odom_first_frame(wait_s)`、`leader_odom_gap`、`own_pose_stale`（只记录，不改控制行为）、`follower_exit(reason=…, leader_age_s)` |
 | `<UAV>_relay_events.jsonl` | relay：`mode_switch`（选源切换）、`hold_enter`（锚点来源/位姿/年龄）、`hold_exit`、`no_safe_hold`（连 HOLD 锚点都拿不到，本 tick 不发 setpoint） |
 
-**归置约定**：落在**工作区的 `runtime_logs/health/`**，与 planner 诊断
+**归置约定**：落在**工作区的隐藏目录 `.runtime_logs/health/`**（与 `.ros_home` 同风格），与 planner 诊断
 （`diagnostic_log_dir` 默认 `~/catkin_swarm6-2/runtime_logs/ego_planner`，见上）同一根目录、同一先例。
 **刻意不经 rosout / `.ros_home`**：任务窗口 rosout 本就无输出（这正是要修的黑箱），诊断类文件日志一律
 直接用文件写。目录由代码按需 `makedirs`，无需改启动脚本。
 
-**采集**：`src/tcp_to_ros/tools/log_fetch.sh` 第 ④ 段会把 `runtime_logs/health/*.jsonl` 收进采集包的
+**采集**：`src/tcp_to_ros/tools/log_fetch.sh` 第 ④ 段会把 `.runtime_logs/health/*.jsonl` 收进采集包的
 `onboard/health/`（固定文件名追加写，机上超 32 MB 时只留尾部＝最近一次任务的数据）。
 GCS 侧同名文件（在 GCS 自己的工作区里）不在该脚本范围，需随 GCS 日志手工归档。
+
+**体积**：跟随环事件只有"起/首帧/空档/退出"几条，relay 事件是边沿触发（选源切换/HOLD 进出一共几条），
+整轮四机仿真实测每机 <2 KB——与 bridge 健康文件一样按需增长，不需要轮转。
 
 **契约（改这里请保持）**：`EventLog.emit()` 只入队、写盘在独立线程、队列满丢最旧并计数——**绝不能把
 文件 IO 时延加进跟随环（10/30 Hz）或 relay（30 Hz 独占 setpoint）的实时路径**；relay 事件一律**边沿触发**，
 不逐帧刷盘；关闭目录（`event_log_dir` 为空）= 不写 param、不建文件。
 
 相关参数：跟随环 `~ego_swarm/event_log_dir`、relay `~event_log_dir`；上层 launch `event_log_dir`
-（`uav_executor_ego.launch` 默认空、仅非空时条件写入；实机/仿真入口传 `runtime_logs/health`）。
+（`uav_executor_ego.launch` 默认空、仅非空时条件写入；实机/仿真入口传 `.runtime_logs/health`）。
 背景与定层口径见 `quality_reports/2026-10-08_two_rounds_coverage_failure_root_cause.md`。
 
 ## Mock 启动
