@@ -26,6 +26,14 @@
   <!-- Predictive safety supervision 业务默认来自 safety_defaults.yaml（active）；arg 默认空，
        仅命令行显式覆盖时条件写入（诊断可 shadow/off）。 -->
   <arg name="safety_supervisor_mode" default="" />
+  <!-- 层高业务默认来自 ego_swarm_defaults.yaml（layer_move_to=15 / layer_follow_route=12）；
+       arg 默认空，仅**地面贴地彩排**显式传 0（见 verification/three_uav_recon/ground_flow.sh：
+       不贴地时 MOVE_TO/FOLLOW_ROUTE 会先插一个 15/12 m 层，地面静止直接判失败）。 -->
+  <arg name="layer_move_to" default="" />
+  <arg name="layer_follow_route" default="" />
+  <!-- 规划器到达判据（planner_defaults.yaml arrival_reach_thresh_m=0.5）；arg 默认空，
+       地面彩排可按现场摆位误差放宽（吸收入位残差）。 -->
+  <arg name="arrival_reach_thresh_m" default="" />
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
   <!-- 执行器/relay 事件日志目录（2026-10-08 增）。arg 默认空、仅非空时条件写入——
@@ -54,6 +62,7 @@
     <param name="diagnostic_log_queue_size" value="2048" />
     <!-- enable_rebound 为诊断/测试 deployment override（canonical 默认 false，见 planner_defaults.yaml）。 -->
     <param name="enable_rebound" value="$(arg enable_rebound)" if="$(eval arg('enable_rebound') != '')" />
+    <param name="arrival_reach_thresh_m" value="$(arg arrival_reach_thresh_m)" if="$(eval arg('arrival_reach_thresh_m') != '')" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->
@@ -107,5 +116,7 @@
     <param name="ego_swarm/configure_px4_params" value="$(arg configure_px4_params)" if="$(eval arg('configure_px4_params') != '')" />
     <!-- 跟随环事件日志（领机首帧/空档/退出原因）——不经 rosout，直接写文件。 -->
     <param name="ego_swarm/event_log_dir" value="$(arg event_log_dir)" if="$(eval arg('event_log_dir') != '')" />
+    <param name="ego_swarm/layer_move_to" value="$(arg layer_move_to)" if="$(eval arg('layer_move_to') != '')" />
+    <param name="ego_swarm/layer_follow_route" value="$(arg layer_follow_route)" if="$(eval arg('layer_follow_route') != '')" />
   </node>
 </launch>

@@ -65,6 +65,26 @@ class EgoLaunchConfigTest(unittest.TestCase):
         self.assertIn("arg('enable_rebound')", _param_if(self.planner, "enable_rebound"))
         self.assertIs(self.pd["enable_rebound"], False)
 
+    def test_ground_rehearsal_overrides_are_opt_in(self):
+        # 2026-10-09 地面彩排（verification/three_uav_recon/ground_flow.sh）：三个参数
+        # arg 默认必须空、param 必须条件写入——不传时行为与默认完全一致。
+        for name in ("layer_move_to", "layer_follow_route", "arrival_reach_thresh_m"):
+            self.assertEqual(self.args.get(name), "", name)
+        self.assertEqual(self.executor_params.get("ego_swarm/layer_move_to"),
+                         "$(arg layer_move_to)")
+        self.assertEqual(self.executor_params.get("ego_swarm/layer_follow_route"),
+                         "$(arg layer_follow_route)")
+        self.assertEqual(self.planner_params.get("arrival_reach_thresh_m"),
+                         "$(arg arrival_reach_thresh_m)")
+        for node, name in ((self.executor, "ego_swarm/layer_move_to"),
+                           (self.executor, "ego_swarm/layer_follow_route"),
+                           (self.planner, "arrival_reach_thresh_m")):
+            self.assertIn("arg('%s')" % name.split("/")[-1], _param_if(node, name) or "")
+        # canonical 默认保持不变（层高 15/12 m、到达判据 0.5 m）
+        self.assertEqual(self.eg["layer_move_to"], 15.0)
+        self.assertEqual(self.eg["layer_follow_route"], 12.0)
+        self.assertEqual(self.pd["arrival_reach_thresh_m"], 0.5)
+
     def test_neighbor_intents_reach_executor_private_params(self):
         self.assertEqual(self.args.get("neighbor_intents"), "")
         self.assertEqual(self.executor_params.get("ego_swarm/neighbor_intents"),
@@ -97,6 +117,8 @@ class EgoLaunchConfigTest(unittest.TestCase):
             "uav_id", "exec_target", "frame_id", "setpoint_out_topic",
             "safety_supervisor_mode", "diagnostic_log_dir",
             "diagnostic_log_queue_size", "enable_rebound",
+            # 地面贴地彩排的显式 deployment override（arg 默认空、条件写入；见 §七 7.1）
+            "arrival_reach_thresh_m",
         }
         self.assertTrue(allowed_planner_params.issuperset(self.planner_params.keys()))
         # 冻结契约/阈值来自 canonical YAML：

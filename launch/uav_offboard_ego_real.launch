@@ -40,6 +40,11 @@
   <arg name="uav_task_timeout_s" default="" />
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
+  <!-- 地面贴地彩排用（见 verification/three_uav_recon/ground_flow.sh）：默认空 = 原行为；
+       传 0 关闭 MOVE_TO/FOLLOW_ROUTE 的层高插入，可放宽规划器到达判据。 -->
+  <arg name="layer_move_to" default="" />
+  <arg name="layer_follow_route" default="" />
+  <arg name="arrival_reach_thresh_m" default="" />
 
   <!-- 1. MAVROS 对接本机 FCU（实机链路；gcs_url 空，不启用 GCS 转发）。
        fcu_url / tgt_system 沿用 MAVROS launch 的现场配置，本入口不传。 -->
@@ -65,6 +70,9 @@
     <arg name="uav_task_timeout_s" value="$(arg uav_task_timeout_s)" />
     <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)" />
     <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)" />
+    <arg name="layer_move_to" value="$(arg layer_move_to)" />
+    <arg name="layer_follow_route" value="$(arg layer_follow_route)" />
+    <arg name="arrival_reach_thresh_m" value="$(arg arrival_reach_thresh_m)" />
     <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
     <arg name="event_log_dir" value="$(arg runtime_log_dir)" />
     <arg name="configure_px4_params" value="false" />
