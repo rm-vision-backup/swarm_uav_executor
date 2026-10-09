@@ -23,6 +23,7 @@ ssh ubuntu@192.168.5.71 'bash ~/catkin_swarm6-2/src/swarm_uav_executor/bashs/sto
 |---|---|
 | `start_onboard.sh` | `cd` 工作空间、source ROS + `devel/setup.bash`、导出 `ROS_HOME`/`ROS_LOG_DIR`，然后 `script` 起 `roslaunch swarm_uav_executor uav_offboard_ego_real.launch`（终端输出同时落转录） |
 | `stop_onboard.sh` | 给本机 `roslaunch` 发 SIGINT → SIGTERM → SIGKILL，最后列残留 |
+| `record_rosbag.sh` | 机载 rosbag 记录（只录关键话题：本机 mavros/执行器/规划/relay setpoint + 邻机与 GCS 的桥接话题，`-u 8,10,13` 可收紧）；输出 `<ws>/.ros_home/log/rosbag/`，lz4 压缩，`-d N` 定时 |
 
 ## 2. 启动前自己看（脚本不检查）
 
