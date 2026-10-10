@@ -34,6 +34,10 @@
   <!-- 规划器到达判据（planner_defaults.yaml arrival_reach_thresh_m=0.5）；arg 默认空，
        地面彩排可按现场摆位误差放宽（吸收入位残差）。 -->
   <arg name="arrival_reach_thresh_m" default="" />
+  <!-- 避让候选（planner_defaults.yaml enable_yield_candidates=true）：arg 默认空。
+       地面彩排必须显式关（false）：三台停在地面同一高度，避让找不到可行候选，
+       10 s 后直接 EGO_PLAN_FAILED（2026-10-09 实测 UAV13）。 -->
+  <arg name="enable_yield_candidates" default="" />
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
   <!-- 执行器/relay 事件日志目录（2026-10-08 增）。arg 默认空、仅非空时条件写入——
@@ -63,6 +67,7 @@
     <!-- enable_rebound 为诊断/测试 deployment override（canonical 默认 false，见 planner_defaults.yaml）。 -->
     <param name="enable_rebound" value="$(arg enable_rebound)" if="$(eval arg('enable_rebound') != '')" />
     <param name="arrival_reach_thresh_m" value="$(arg arrival_reach_thresh_m)" if="$(eval arg('arrival_reach_thresh_m') != '')" />
+    <param name="enable_yield_candidates" value="$(arg enable_yield_candidates)" if="$(eval arg('enable_yield_candidates') != '')" />
   </node>
 
   <!-- 位姿中继：/mavros/local_position/pose -> /local_pose（ego driver 依赖） -->

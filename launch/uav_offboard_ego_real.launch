@@ -45,6 +45,7 @@
   <arg name="layer_move_to" default="" />
   <arg name="layer_follow_route" default="" />
   <arg name="arrival_reach_thresh_m" default="" />
+  <arg name="enable_yield_candidates" default="" />
 
   <!-- 1. MAVROS 对接本机 FCU（实机链路；gcs_url 空，不启用 GCS 转发）。
        fcu_url / tgt_system 沿用 MAVROS launch 的现场配置，本入口不传。 -->
@@ -73,6 +74,7 @@
     <arg name="layer_move_to" value="$(arg layer_move_to)" />
     <arg name="layer_follow_route" value="$(arg layer_follow_route)" />
     <arg name="arrival_reach_thresh_m" value="$(arg arrival_reach_thresh_m)" />
+    <arg name="enable_yield_candidates" value="$(arg enable_yield_candidates)" />
     <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)" />
     <arg name="event_log_dir" value="$(arg runtime_log_dir)" />
     <arg name="configure_px4_params" value="false" />
