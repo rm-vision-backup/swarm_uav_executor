@@ -63,7 +63,7 @@ def _is_safety_hold_reason(reason: str) -> bool:
             or reason.startswith(_HOLD_REASON_GROUP_BRAKE + ":"))
 
 _SETPOINT_HZ = 30.0
-_FOLLOW_POSE_TIMEOUT_S = 1.0   # leader odom timeout -> LEADER_LOST
+_FOLLOW_POSE_TIMEOUT_S = 3.0   # leader odom timeout -> LEADER_LOST（2026-10-10 由 1.0 放宽：空中实测停摆 1.1–5.2 s；≤3 s 事件不再打断，4.4–4.6 s 事件仍会触发；UDP 化后按实测回调）
 # 建好领机 odom 订阅后，等第一帧的宽限窗口。订阅建立与首帧到达之间有几十毫秒空档，
 # 若循环首轮就要求"已有数据"会误判 LEADER_LOST（2026-09-20 四机彩排实测：领机 odom
 # 全程 30 Hz 在发，任务却随机失败）。只对"从未收到过第一帧"生效；收到过数据后仍用
