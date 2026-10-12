@@ -82,20 +82,20 @@ class EgoSwarmDriverTest(unittest.TestCase):
         driver._on_pose(pose)
 
     def _emit_leader_odom(self, driver, x, y, z):
-        from nav_msgs.msg import Odometry
-        odom = Odometry()
-        odom.pose.pose.position.x = x
-        odom.pose.pose.position.y = y
-        odom.pose.pose.position.z = z
-        driver._on_leader_odom(odom)
+        from geometry_msgs.msg import PointStamped
+        pose = PointStamped()
+        pose.point.x = x
+        pose.point.y = y
+        pose.point.z = z
+        driver._on_leader_odom(pose)
 
     def _emit_neighbor_odom(self, driver, x, y, z):
-        from nav_msgs.msg import Odometry
-        odom = Odometry()
-        odom.pose.pose.position.x = x
-        odom.pose.pose.position.y = y
-        odom.pose.pose.position.z = z
-        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+        from geometry_msgs.msg import PointStamped
+        pose = PointStamped()
+        pose.point.x = x
+        pose.point.y = y
+        pose.point.z = z
+        driver._on_neighbor_odom(pose, "/UAV2/swarm_pose")
 
     def _dispatch(self, driver, goal, state, delay_s=0.05):
         self._emit_pose(driver, 0.0, 0.0, 15.0)
@@ -135,8 +135,8 @@ class EgoSwarmDriverTest(unittest.TestCase):
     def test_default_neighbor_topics_exclude_own_aircraft(self):
         topics = _default_neighbor_odom_topics("UAV7").split(',')
         self.assertEqual(len(topics), 14)
-        self.assertNotIn("/UAV7/mavros/local_position/odom", topics)
-        self.assertIn("/UAV15/mavros/local_position/odom", topics)
+        self.assertNotIn("/UAV7/swarm_pose", topics)
+        self.assertIn("/UAV15/swarm_pose", topics)
 
     def test_neighbor_intents_are_split_and_forwarded_to_cpp_input(self):
         driver, ros = self._driver(
@@ -532,12 +532,12 @@ class EgoSwarmDriverTest(unittest.TestCase):
         driver, _ = self._driver()
         self._emit_pose(driver, 0.0, 0.0, 12.0)
         # 邻机足够远：水平 5m >= 1.0m -> 门禁不触发。
-        from nav_msgs.msg import Odometry
-        odom = Odometry()
-        odom.pose.pose.position.x = 5.0
-        odom.pose.pose.position.y = 0.0
-        odom.pose.pose.position.z = 12.1
-        driver._on_neighbor_odom(odom, "/UAV2/mavros/local_position/odom")
+        from geometry_msgs.msg import PointStamped
+        pose = PointStamped()
+        pose.point.x = 5.0
+        pose.point.y = 0.0
+        pose.point.z = 12.1
+        driver._on_neighbor_odom(pose, "/UAV2/swarm_pose")
         goal = MotionGoal(10, 0, 12, 0)
         result_holder = {}
         def runner():

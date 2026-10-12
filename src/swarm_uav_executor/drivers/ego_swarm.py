@@ -90,7 +90,7 @@ def _split_topics(raw):
 
 def _default_neighbor_odom_topics(exec_target):
     own = str(exec_target or "").strip("/")
-    return ",".join("/UAV%d/mavros/local_position/odom" % idx
+    return ",".join("/UAV%d/swarm_pose" % idx
                     for idx in range(1, 16) if "UAV%d" % idx != own)
 
 
@@ -216,10 +216,10 @@ class EgoSwarmDriver(MotionDriver):
         self._last_leader_odom_mono_s = None
         self._neighbor_poses = {}
         self._neighbor_odom_subs = []
-        from nav_msgs.msg import Odometry
+        # 邻机位姿来自机间轻量流 swarm_pose(geometry_msgs/PointStamped，仅位置)。
         for topic in _split_topics(neighbor_odom_topics):
             self._neighbor_odom_subs.append(ros.Subscriber(
-                topic, Odometry, self._on_neighbor_odom, callback_args=topic, queue_size=1))
+                topic, PointStamped, self._on_neighbor_odom, callback_args=topic, queue_size=1))
         self._min_center_distance_m = float(min_center_distance_m)
         self._layer_move_to = float(layer_move_to)
         self._layer_follow_route = float(layer_follow_route)
@@ -262,13 +262,14 @@ class EgoSwarmDriver(MotionDriver):
             self._origin_confirmed = bool(msg.data)
 
     def _on_leader_odom(self, msg):
+        # msg 为 geometry_msgs/PointStamped（机间轻量流 swarm_pose）：只带位置。
         with self._lock:
-            self._last_leader_pose = msg.pose.pose
+            self._last_leader_pose = msg.point
             self._last_leader_odom_mono_s = self._monotonic_clock()
 
     def _on_neighbor_odom(self, msg, topic):
         with self._lock:
-            self._neighbor_poses[topic] = (copy.deepcopy(msg.pose.pose), self._monotonic_clock())
+            self._neighbor_poses[topic] = (copy.deepcopy(msg.point), self._monotonic_clock())
 
     def _nearest_neighbor_distance(self, own_pose):
         """Return the nearest fresh neighbor's 3D center distance, if any."""
@@ -279,9 +280,9 @@ class EgoSwarmDriver(MotionDriver):
         for pose, stamp in neighbors:
             if now - stamp > self.pose_timeout_s:
                 continue
-            dx = own_pose.position.x - pose.position.x
-            dy = own_pose.position.y - pose.position.y
-            dz = own_pose.position.z - pose.position.z
+            dx = own_pose.position.x - pose.x
+            dy = own_pose.position.y - pose.y
+            dz = own_pose.position.z - pose.z
             distances.append(math.sqrt(dx * dx + dy * dy + dz * dz))
         return min(distances) if distances else None
 
@@ -300,18 +301,18 @@ class EgoSwarmDriver(MotionDriver):
 
     def _leader_odom_topic_for(self, leader_id):
         if self._leader_odom_topic_prefix:
-            return "/%s/mavros/local_position/odom" % self._leader_odom_topic_prefix
+            return "/%s/swarm_pose" % self._leader_odom_topic_prefix
         digits = re.sub(r"\D", "", str(leader_id or ""))
         leader_ns = "UAV" + (str(int(digits)) if digits else "0")
-        return "/%s/mavros/local_position/odom" % leader_ns
+        return "/%s/swarm_pose" % leader_ns
 
     def _ensure_leader_odom_sub(self, leader_id):
         topic = self._leader_odom_topic_for(leader_id)
         if self._leader_odom_sub is not None and self._leader_odom_topic == topic:
             return
-        from nav_msgs.msg import Odometry
+        # 领机位姿来自机间轻量流 swarm_pose(geometry_msgs/PointStamped，仅位置)。
         self._leader_odom_sub = self._ros.Subscriber(
-            topic, Odometry, self._on_leader_odom, queue_size=1)
+            topic, PointStamped, self._on_leader_odom, queue_size=1)
         self._leader_odom_topic = topic
 
     def _publish_goal(self, goal):
@@ -591,9 +592,8 @@ class EgoSwarmDriver(MotionDriver):
                             False, "MIN_DISTANCE_BREACH",
                             self._distance_breach_message(distance, "follower PI control")),
                         distance_m=round(distance, 3))
-                target = (leader_pose.position.x + offset[0],
-                          leader_pose.position.y + offset[1],
-                          leader_pose.position.z + offset[2])
+                lx, ly, lz = self._xyz(leader_pose)
+                target = (lx + offset[0], ly + offset[1], lz + offset[2])
                 if last_calc is None or now - last_calc >= loop_dt:
                     error = (target[0] - own_pose.position.x,
                              target[1] - own_pose.position.y,
@@ -640,11 +640,21 @@ class EgoSwarmDriver(MotionDriver):
             self._direct_control_pub.publish(Bool(False))
         return _finish(MotionResult(False, "SHUTTING_DOWN", "driver shutting down"))
 
+    @staticmethod
+    def _xyz(pose_like):
+        """位姿分量归一化：Pose/PoseStamped.pose 取 .position，Point 取自身。
+
+        领机/邻居位姿来自轻量 swarm_pose(PointStamped)，此处存的是其 .point(Point)；
+        本机 pose 与到达判据内的合成对照体是 Pose(.position)。统一经此后，_near 与
+        到达判据对 Point/Pose 等价。
+        """
+        p = getattr(pose_like, "position", pose_like)
+        return p.x, p.y, p.z
+
     def _near(self, own, target):
-        dx = own.position.x - target.position.x
-        dy = own.position.y - target.position.y
-        dz = own.position.z - target.position.z
-        return math.hypot(math.hypot(dx, dy), dz) <= self.pos_tolerance_m
+        ax, ay, az = self._xyz(own)
+        bx, by, bz = self._xyz(target)
+        return math.hypot(math.hypot(ax - bx, ay - by), az - bz) <= self.pos_tolerance_m
 
     def start_move_to(self, goal, cancel_event, deadline):
         if goal.command == "HOVER":

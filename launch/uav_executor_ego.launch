@@ -11,7 +11,8 @@
   <arg name="mavros_state_topic" default="/mavros/state" />
   <!-- 编队槽位: YAML 字典 uav_id -> [x, y, z]（ENU，相对 leader），可空 -->
   <arg name="formation_offsets" default="{}" />
-  <!-- leader odom 话题前缀: 如空则自动按 /<leader>/mavros/local_position/odom 构造 -->
+  <!-- leader 位姿话题前缀: 如空则自动按 /<leader>/swarm_pose 构造
+       （swarm_pose = 机间轻量位姿流，见 swarm_pose_relay_node.py） -->
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
   <!-- configure_px4_params 业务默认来自 ego_swarm_defaults.yaml（false）；launch arg 默认空，
@@ -76,6 +77,12 @@
     <param name="source_topic" value="/mavros/local_position/pose" />
     <param name="target_topic" value="/local_pose" />
   </node>
+
+  <!-- 机间位姿中继：/mavros/local_position/odom(Odometry ~712B) -> /swarm_pose
+       (geometry_msgs/PointStamped ~45B)。跟随器不再经桥接收整条 odom，改订轻量
+       swarm_pose；桥按 topology.yaml 的 swarm_pose 条目转发，接收侧为 /UAVn/swarm_pose。 -->
+  <node pkg="swarm_uav_executor" type="swarm_pose_relay_node.py"
+        name="swarm_pose_relay" output="screen" />
 
   <!-- setpoint_relay：/mavros/setpoint_raw/local 的唯一 MAVROS setpoint 发布者。
        订阅两个 PositionTarget 候选源（EGO /setpoint/ego、follower /setpoint/follower）、

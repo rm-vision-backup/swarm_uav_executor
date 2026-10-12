@@ -24,8 +24,8 @@ ego_swarm:                              # EGO-Swarm driver 参数段（~ego_swar
   waypoint_densify_spacing: 3.0       # 航点加密间距（m，>0）：authoritative 3.0（26082916 修 2.0 漂移）
   follower_setpoint_topic: /setpoint/follower  # follower setpoint 话题（str）：PI 输出发布路径
   neighbor_intents: ''                # 邻机 intent 话题列表（str，逗号分隔）：deployment override
-  leader_odom_topic_prefix: ''        # leader odom 话题前缀（str）：'' 自动按 /<leader>/mavros/local_position/odom
-  neighbor_odom_topics: ''            # 邻机 odom 话题列表（str，逗号分隔）：deployment override
+  leader_odom_topic_prefix: ''        # leader 位姿话题前缀（str）：'' 自动按 /<leader>/swarm_pose（机间轻量位姿流，见 swarm_pose_relay_node.py）
+  neighbor_odom_topics: ''            # 邻机位姿话题列表（str，逗号分隔，/UAVn/swarm_pose）：deployment override
   formation_offsets: {}               # 编队槽位（dict uav_id->[x,y,z] ENU，相对 leader）：可空
   arm_service: /mavros/cmd/arming     # arm 服务名（str）：本机 arm 入口（本包不主动调用）
   mode_service: /mavros/set_mode      # 模式切换服务名（str）：本包不主动调用

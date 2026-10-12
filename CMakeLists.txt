@@ -22,6 +22,7 @@ catkin_package(
 
 catkin_install_python(PROGRAMS
   scripts/pose_relay_node.py
+  scripts/swarm_pose_relay_node.py
   scripts/setpoint_relay_node.py
   scripts/uav_executor_node.py
   scripts/gp_origin_receiver.py
@@ -43,6 +44,7 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_nosetests(test/test_ego_swarm_driver.py)
   catkin_add_nosetests(test/test_ego_launch_config.py)
   catkin_add_nosetests(test/test_setpoint_relay.py)
+  catkin_add_nosetests(test/test_swarm_pose_relay.py)
   catkin_add_nosetests(test/test_gps_bias.py)
   catkin_add_nosetests(test/test_gps_bias_wiring.py)
   add_rostest(test/uav_executor_rostest.test)

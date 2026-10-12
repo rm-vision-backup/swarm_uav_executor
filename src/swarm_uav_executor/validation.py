@@ -162,7 +162,7 @@ def validate_route_assignment(assignment, leader_id: str = "") -> MotionGoal:
             raise RequestValidationError(
                 "INVALID_ASSIGNMENT", "FOLLOW_ROUTE follower requires leader_id different from uav_id")
         # target_pose is only a leader reference for the follower; the driver
-        # resolves the actual target from leader odom + formation_offset.
+        # resolves the actual target from leader pose (swarm_pose) + formation_offset.
         if assignment.target_pose:
             last = (assignment.target_pose.x, assignment.target_pose.y, assignment.target_pose.z, assignment.target_pose.yaw)
         else:

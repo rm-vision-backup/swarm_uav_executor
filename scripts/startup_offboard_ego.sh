@@ -110,7 +110,7 @@ start_uav() {
   local neighbor_intents
   local enable_rebound
   local -a timeout_args=()
-  neighbor_odom_topics=$(neighbor_topics "$idx" "mavros/local_position/odom")
+  neighbor_odom_topics=$(neighbor_topics "$idx" "swarm_pose")
   neighbor_intents=$(neighbor_topics "$idx" "trajectory_intent")
   enable_rebound=$(rebound_enabled "$idx")
   [ -n "$EGO_TASK_TIMEOUT_S" ] && timeout_args+=(uav_task_timeout_s:=$EGO_TASK_TIMEOUT_S)

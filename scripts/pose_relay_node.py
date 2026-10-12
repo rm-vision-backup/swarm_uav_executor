@@ -8,8 +8,8 @@ ego_planner_driver_node 与 EgoSwarmDriver 都订阅 `local_pose`
     /mavros/local_position/pose  -->  /local_pose
 
 在机载多 Master 隔离仿真中，MAVROS 与 ego/executor 运行在同一机载
-Master，本节点直接订阅/发布即可；跨 Master 的机间转发由 topology bridge
-处理（只转发 /UAV{n}/mavros/local_position/odom），不需要本节点参与。
+Master，本节点直接订阅/发布即可；跨 Master 的机间位姿转发由 topology bridge
+处理（只转发 /UAV{n}/swarm_pose，机间轻量位姿流），不需要本节点参与。
 
 默认话题可经私有参数覆盖：
   ~source_topic  (默认 /mavros/local_position/pose)

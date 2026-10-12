@@ -60,7 +60,7 @@
     <arg name="state_topic" value="/uav_task_state" />
   </include>
 
-  <!-- 3. 拓扑桥接：把本机 mavros_state/uav_task_state/odom 桥到 GCS_A 与其他 UAV
+  <!-- 3. 拓扑桥接：把本机 mavros_state/uav_task_state/swarm_pose 桥到 GCS_A 与其他 UAV
         （仅桥接，不跑 mock executor，避免与真实 executor 的 Service 冲突） -->
   <include file="$(find tcp_to_ros)/launch/topology_group_a_sim.launch">
     <arg name="uav_name" value="$(arg uav_name)"/>

@@ -8,10 +8,11 @@
 # 记录范围（2026-10-10 按"leader→follower odom 为什么中断"重定；不录 100 Hz 的 IMU 等噪音）：
 #   每台机载各录一份，三份按时间轴对齐即可把断点钉在"发送侧→桥→链路→接收侧"的哪一段：
 #   ① 发送侧：本机 mavros 的状态/位姿/odom/rc/time_reference（领机是否一直在发）；
-#   ② 接收侧：桥接来的**邻机同名话题**（如 UAV10 上的 /UAV8/mavros/local_position/odom
-#      —— 跟随环的真正输入，见 topology.yaml 桥接清单）；①与②对减＝中间段丢了什么；
-#   ③ 链路哨兵：与 odom 同源的低速流（mavros/state、time_reference、rc/in、gps_bias）
-#      —— 一起停＝整条链路断；只有 odom 停＝该话题的发布/桥接端问题；
+#   ② 接收侧：桥接来的**邻机轻量位姿流**（如 UAV10 上的 /UAV8/swarm_pose
+#      —— 跟随环的真正输入；本机 /swarm_pose 与源 /mavros/local_position/odom 对照。
+#      见 topology.yaml 桥接清单）；①与②对减＝中间段丢了什么；
+#   ③ 链路哨兵：与位姿流同源的低速流（mavros/state、time_reference、rc/in、gps_bias）
+#      —— 一起停＝整条链路断；只有位姿流停＝该话题的发布/桥接端问题；
 #   ④ 消费侧：跟随环 setpoint、exec_state、intent、task_state —— 断链时本机在做什么。
 #   只录当前**存在**的话题：缺席对端不会产生空话题或刷告警。
 #
@@ -61,6 +62,7 @@ BAG="$OUTDIR/${UAV}_${STAMP}${SUFFIX}.bag"
 LOCAL_CANDIDATES=(
   /mavros/state
   /mavros/local_position/odom
+  /swarm_pose                     # 机间轻量位姿流（relay 从 odom 抽位置，桥转发此话题）
   /mavros/local_position/pose
   /mavros/rc/in
   /mavros/time_reference         # 链路哨兵：与 odom 同源的低速流
@@ -96,7 +98,7 @@ done
 # 清单＝topology.yaml 里 bridge 实际转发的话题全集（mavros 状态族 + 时钟 + 任务/intent）。
 # 默认收录全部"存在"的对端；板上 bridge 会给 16 台都注册发布者（哪怕没在飞），
 # 想收紧就 `-u 8,10,13`（必须带 -u，避免把没在飞的对端也录进包）。
-RELAY_PATTERN='/(UAV[0-9]+|GCS_A)/(mavros/(state|time_reference|rc/in|global_position/global|local_position/(odom|pose))|trajectory_intent|uav_task_state|gps_bias|gp_origin_confirmed|group_a/gp_origin)'
+RELAY_PATTERN='/(UAV[0-9]+|GCS_A)/(mavros/(state|time_reference|rc/in|global_position/global|local_position/(odom|pose))|swarm_pose|trajectory_intent|uav_task_state|gps_bias|gp_origin_confirmed|group_a/gp_origin)'
 if [ -n "$UAVS" ]; then
   peer_re="UAV($(tr ',' '|' <<<"$UAVS"))"
   mapfile -t RELAYED < <(grep -xE "$RELAY_PATTERN" <<<"$EXISTING" | grep -E "/(${peer_re}|GCS_A)/")
