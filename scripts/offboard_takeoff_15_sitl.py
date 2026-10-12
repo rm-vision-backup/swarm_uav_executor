@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-15 机无头 SITL 批量 arm + OFFBOARD 脚本（每机独立 ROS Master 11311..11325）。
+15/16 机无头 SITL 批量 arm + OFFBOARD 脚本（每机独立 ROS Master 11311..11326）。
 
 迁移自 safe_valley_exp/scripts/offboard_takeoff_15.py（implementation_plan_26083018 §4.3）。
-**仅适用于本机 15 机 SITL 仿真流程**；实机 takeoff 使用独立 onboard agent 方案，
-不复用本脚本（固定端口 11311..11325、本机执行）。
+**仅适用于本机 15/16 机 SITL 仿真流程**；实机 takeoff 使用独立 onboard agent 方案，
+不复用本脚本（固定端口 11311..11326、本机执行）。
 
 职责（配合正确启动流程）：
   0. 先启动机载层（offboard 程序）：MAVROS + ego driver + executor + bridge，
@@ -19,7 +19,7 @@
 
 用法：
   python3 offboard_takeoff_15_sitl.py 1 2 3
-  不写编号 -> 默认 1..15；默认逐机运行。
+  不写编号 -> 默认 1..16；默认逐机运行。
   加 --parallel -> 所有选中 UAV 并发运行。
 
 注意:
@@ -148,7 +148,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="选定 UAV arm + OFFBOARD（默认逐机，ego driver 自动软起飞）")
     parser.add_argument("uavs", nargs="*", type=int, metavar="UAV",
-                        help="UAV 编号，例如：1 2 3；不写则运行 1..15")
+                        help="UAV 编号，例如：1 2 3；不写则运行 1..16")
     parser.add_argument("--parallel", action="store_true",
                         help="并发运行；默认逐机运行")
     parser.add_argument("--individual", action="store_true",
@@ -156,9 +156,9 @@ def main():
     args = parser.parse_args()
 
     results = {}
-    idxs = args.uavs or list(range(1, 16))
-    if any(idx < 1 or idx > 15 for idx in idxs):
-        parser.error("UAV 编号必须在 1..15")
+    idxs = args.uavs or list(range(1, 17))
+    if any(idx < 1 or idx > 16 for idx in idxs):
+        parser.error("UAV 编号必须在 1..16")
     if len(set(idxs)) != len(idxs):
         parser.error("UAV 编号不能重复")
 

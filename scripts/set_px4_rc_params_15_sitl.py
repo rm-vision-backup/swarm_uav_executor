@@ -107,14 +107,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="15 机 SITL 写入无 RC（RC 丢失）相关 PX4 参数")
     parser.add_argument("uavs", nargs="*", type=int, metavar="UAV",
-                        help="UAV 编号，例如：1 2 3；不写则运行 1..15")
+                        help="UAV 编号，例如：1 2 3；不写则运行 1..16")
     parser.add_argument("--no-push", action="store_true",
                         help="不调用 /mavros/param/push 持久化")
     args = parser.parse_args()
 
-    idxs = args.uavs or list(range(1, 16))
-    if any(idx < 1 or idx > 15 for idx in idxs):
-        parser.error("UAV 编号必须在 1..15")
+    idxs = args.uavs or list(range(1, 17))
+    if any(idx < 1 or idx > 16 for idx in idxs):
+        parser.error("UAV 编号必须在 1..16")
     if len(set(idxs)) != len(idxs):
         parser.error("UAV 编号不能重复")
 

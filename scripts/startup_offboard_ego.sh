@@ -80,7 +80,7 @@ neighbor_topics() {
   local suffix=$2
   local topics=""
   local neighbor_idx
-  for neighbor_idx in $(seq 1 15); do
+  for neighbor_idx in $(seq 1 16); do
     if [ "$neighbor_idx" -eq "$idx" ]; then
       continue
     fi
