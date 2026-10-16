@@ -8,7 +8,7 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - 同一时刻最多一个正常任务；同键同内容幂等，同键不同内容拒绝，HOLD 可抢占。
 - `UavTask` 执行 PREPARE，`UavTaskControl START` 才允许动作线程推进；整批未通过时可在 START 前 ABORT。
 - `mavros_position` 只连接配置的本机 MAVROS namespace，持续发布本地位置 setpoint。
-- arm/OFFBOARD 由外部起飞脚本（`offboard_takeoff_15_sitl.py`：HOLD → arm → OFFBOARD）先行完成；
+- arm/OFFBOARD 在实机由现场飞手完成；SITL 才使用外部起飞脚本（`offboard_takeoff_15_sitl.py`：HOLD → arm → OFFBOARD）；
   外部起飞完成后再提交 `UavTask` 执行 PREPARE，整批 PREPARE 成功后才发送 `UavTaskControl START`。
   `ego_swarm` driver 的 `prepare()` 要求本机**已 armed + OFFBOARD**，不再自行按需 arm；
   软起飞由 `ego_planner_driver` 的 `TAKEOFF` 状态自动完成（`takeoff_height_m=5.0`）。
@@ -44,6 +44,8 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 
 ## 实机部署（implementation_plan_26091101）
 
+日常执行顺序与逐机检查按总工作区的 [上机工作流](../../verification/real_uav_workflow/README.md)，下文仅列入口与职责。
+
 机载实机入口与仿真入口分离：
 
 | 入口 | 用途 |
@@ -54,7 +56,8 @@ ROS Noetic 单机任务执行器。每个实例绑定一个不可变的 `(uav_id
 - 启动/停止：`bashs/start_onboard.sh` / `bashs/stop_onboard.sh`（现场或 ssh 手操），
   等价 `real_setup.md` §5.1.1 + §5.1.2 方式 B；见 `bashs/README.md`。多机批量从地面站用
   `tcp_to_ros/tools/onboard_ctl.sh`（见其 `README.md` §5.1）。只启动本机程序，不循环启动其他 UAV；
-  **不自动 arm / OFFBOARD / 起飞 / 任务 START**，实机由现场遥控器完成 arm/OFFBOARD。
+  启动脚本不发送 arm/OFFBOARD 或任务 START，实机由现场遥控器完成 arm/OFFBOARD；
+  **切换后 planner 会自动软起飞约 5 m**，不能把“脚本不发起飞命令”理解为切 OFFBOARD 后飞机仍不会移动。
   **不设开机自启**：原 `services/`（systemd unit）已于 2026-09-14 删除（未在实机安装过）。
 - 身份边界：机载 ROS 运行时统一使用执行层 `UAVn`（`uav_id`、`exec_target`、hostname、
   topic/service 路径）；任务层 `Axx` 仅由 `tcp_to_ros` 处理，机载不做 Axx 反向映射。
