@@ -30,6 +30,8 @@
   <arg name="formation_offsets" default="{}" />
   <arg name="leader_odom_topic_prefix" default="" />
   <arg name="neighbor_odom_topics" default="" />
+  <!-- 合包传输层：空 = 走 topology_config 的 bundle_transport；测试时传 udp/tcp。 -->
+  <arg name="bundle_transport" default="" />
   <!-- 无桨地面联调（不 arm/不 OFFBOARD）：noprop:=true 把 mavros_state_topic 置空，跳过
        PREPARE 的 connected/armed/OFFBOARD 门（驱动侧 ego_swarm.py 仅在该参数非空时检查）。
        默认 false ⇒ 实飞行为零影响。用开关而非直接传空串，是因为 roslaunch 命令行会丢弃空值
@@ -86,6 +88,7 @@
     <arg name="config" value="$(arg topology_config)" />
     <arg name="uav_name" value="$(arg uav_name)" />
     <arg name="health_log_dir" value="$(arg runtime_log_dir)" />
+    <arg name="bundle_transport" value="$(arg bundle_transport)" />
   </include>
 
   <!-- 4. 一次性全局原点设置和 MAVROS 回读确认。 -->
