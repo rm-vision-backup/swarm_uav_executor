@@ -23,6 +23,9 @@
   <arg name="uav_task_timeout_s" default="" />
   <arg name="ego_hold_timeout_s" default="" />
   <arg name="safety_supervisor_mode" default="" />
+  <!-- 与实机 launch 对齐：SITL 也允许按机覆盖层高（B 组 layer_move_to=8）。 -->
+  <arg name="layer_move_to" default="" />
+  <arg name="layer_follow_route" default="" />
   <arg name="diagnostic_log_dir"
        default="$(env HOME)/catkin_swarm6-2/.ros_home/log/ego_planner" />
   <!-- 观测/事件日志目录（bridge 健康 + 执行器/relay 事件）：仿真也落，便于用同款文件复现现场问题。
@@ -52,6 +55,8 @@
     <arg name="uav_task_timeout_s" value="$(arg uav_task_timeout_s)"/>
     <arg name="ego_hold_timeout_s" value="$(arg ego_hold_timeout_s)"/>
     <arg name="safety_supervisor_mode" value="$(arg safety_supervisor_mode)"/>
+    <arg name="layer_move_to" value="$(arg layer_move_to)"/>
+    <arg name="layer_follow_route" value="$(arg layer_follow_route)"/>
     <arg name="diagnostic_log_dir" value="$(arg diagnostic_log_dir)"/>
     <arg name="event_log_dir" value="$(arg runtime_log_dir)"/>
     <!-- arm/OFFBOARD and PX4 parameter setup belong to offboard_takeoff_15_sitl.py. -->

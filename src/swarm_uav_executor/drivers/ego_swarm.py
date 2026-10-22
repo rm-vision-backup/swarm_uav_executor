@@ -90,8 +90,9 @@ def _split_topics(raw):
 
 def _default_neighbor_odom_topics(exec_target):
     own = str(exec_target or "").strip("/")
+    # 生产身份覆盖 UAV1–UAV16；range 上界原为 16，UAV16 不在任何其他机的 fallback 列表里。
     return ",".join("/UAV%d/swarm_pose" % idx
-                    for idx in range(1, 16) if "UAV%d" % idx != own)
+                    for idx in range(1, 17) if "UAV%d" % idx != own)
 
 
 class EgoSwarmDriver(MotionDriver):
@@ -383,7 +384,9 @@ class EgoSwarmDriver(MotionDriver):
         points = [start]
         if abs(sz - layer) > self._layer_tolerance_m:
             points.append((sx, sy, layer))
-        if goal.command == "FOLLOW_ROUTE" and goal.waypoints:
+        # FAULT_EXIT 也支持 waypoint 路线（例如先离开编队占用区再横向退出）。
+        # 之前只把最终点纳入关键点，配置里的中间 waypoint 会被静默丢弃。
+        if goal.command in ("FAULT_EXIT", "FOLLOW_ROUTE") and goal.waypoints:
             for waypoint in goal.waypoints:
                 points.append((float(waypoint[0]), float(waypoint[1]), layer))
             if abs(gz - layer) > self._layer_tolerance_m:
@@ -631,6 +634,12 @@ class EgoSwarmDriver(MotionDriver):
                     if arrived_since is None:
                         arrived_since = now
                     elif now - arrived_since >= self.steady_s:
+                        # Follower task done: latch a HOLD at the current pose. Without
+                        # this the relay falls back to ego and resumes the stale
+                        # prepare/MOVE_TO goal, making followers fly back to takeoff.
+                        # Order matters: _issue_hold clears _last_cmd_reply, so emit
+                        # COMPLETED afterwards to keep the executor's terminal state.
+                        self._issue_hold()
                         self._emit_completed()
                         return _finish(MotionResult(True, "", "follower formation reached"))
                 else:

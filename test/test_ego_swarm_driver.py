@@ -134,8 +134,9 @@ class EgoSwarmDriverTest(unittest.TestCase):
 
     def test_default_neighbor_topics_exclude_own_aircraft(self):
         topics = _default_neighbor_odom_topics("UAV7").split(',')
-        self.assertEqual(len(topics), 14)
+        self.assertEqual(len(topics), 15)
         self.assertNotIn("/UAV7/swarm_pose", topics)
+        self.assertIn("/UAV16/swarm_pose", topics)
         self.assertIn("/UAV15/swarm_pose", topics)
 
     def test_neighbor_intents_are_split_and_forwarded_to_cpp_input(self):
